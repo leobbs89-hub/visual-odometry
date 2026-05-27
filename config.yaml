@@ -1,0 +1,85 @@
+# ============================================================
+# config.yaml — Parâmetros do Pipeline de Odometria Visual
+# Edite este arquivo para customizar cada execução.
+# ============================================================
+
+# --- Caminhos ---
+# Use barras normais "/" mesmo no Windows, ou variáveis de ambiente.
+# Exemplo Linux/Mac : /home/usuario/dados/PMG
+# Exemplo Windows   : C:/Users/bbs_l/OneDrive/Leandro/ITA/PMG
+paths:
+  base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/PMG"
+  map_tif:        "Codigos/imagem_satelite.tif"        # relativo a base_path
+  images:         "Google earth/1500_2/Resized"        # relativo a base_path
+  ground_truth:   "Codigos/Coord-Heading-Elev_1500_2.csv"  # relativo a base_path
+  output:         "Artigo/Resultados/1500_2"           # relativo a base_path
+
+# --- Câmera ---
+# Resolução e campo de visão em graus.
+# fx, fy, cx, cy são calculados automaticamente a partir destes valores.
+camera:
+  width:  640
+  height: 640
+  h_fov:  71.56   # horizontal field of view (graus)
+  v_fov:  71.56   # vertical field of view (graus)
+
+# --- Detector ---
+# Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
+detector: ORB
+
+# --- Dispositivo para detectores neurais (SUPERPOINT, LOFTR, MATCHFORMER) ---
+# auto  → usa GPU se disponível, senão roda em CPU automaticamente (recomendado)
+# cpu   → força CPU mesmo que haja GPU (mais lento, sem dependência de CUDA)
+# cuda  → força GPU; lança erro se não houver CUDA disponível
+device: auto
+
+# --- Parâmetros por detector ---
+detector_params:
+  orb:
+    nfeatures:      1500
+    scaleFactor:    1.2
+    nlevels:        8
+    edgeThreshold:  31
+    firstLevel:     0
+    WTA_K:          2
+    scoreType:      HARRIS    # HARRIS ou FAST
+    patchSize:      31
+
+  akaze:
+    descriptor_type:     MLDB    # MLDB ou MLDB_UPRIGHT
+    descriptor_size:     0
+    descriptor_channels: 3
+    threshold:           0.0001
+    nOctaves:            4
+    nOctaveLayers:       4
+    diffusivity:         PM_G2   # PM_G1 | PM_G2 | WEICKERT | CHARBONNIER
+
+  superpoint:
+    max_num_keypoints: 800
+
+  loftr:
+    pretrained: outdoor   # outdoor ou indoor
+
+  matchformer:
+    backbone_type: largesea   # litela | largela | litesea | largesea
+    match_coarse:
+      thr:                    0.2
+      border_rm:              2
+      train_coarse_percent:   0.2
+      train_pad_num_gt_min:   100
+    match_type: dual_softmax  # dsmax_tempeture | dual_softmax
+
+# --- Correspondências (ORB / AKAZE) ---
+matcher:
+  nn_match_ratio: 0.8
+
+# --- Map Matching ---
+map_matching:
+  enabled:   false
+  interval:  1       # a cada quantos frames executar
+  roi_size_m: 1000   # tamanho da região de busca no mapa (metros)
+
+# --- Visualização ---
+display:
+  show_plot:   true    # gráfico de trajetória em tempo real
+  show_images: false   # janela com correspondências entre frames

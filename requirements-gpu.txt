@@ -1,0 +1,19 @@
+# ============================================================
+# Dependências GPU / Deep Learning — Detectores Neurais
+# Necessário apenas para: SUPERPOINT, LOFTR ou MATCHFORMER
+#
+# Instale com: pip install -r requirements-gpu.txt
+#
+# ATENÇÃO: instale o PyTorch compatível com sua versão de CUDA.
+# Consulte https://pytorch.org/get-started/locally/ e substitua
+# a linha do torch abaixo se necessário.
+# Exemplo com CUDA 12.1:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# ============================================================
+
+# Deep learning (CPU por padrão; veja instrução acima para GPU)
+torch>=2.1
+torchvision>=0.16
+
+# Feature matching neural (LoFTR)
+kornia>=0.7

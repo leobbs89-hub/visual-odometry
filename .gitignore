@@ -1,0 +1,54 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Dados e resultados (não versionar dados pessoais)
+*.tif
+*.tiff
+*.kml
+*.csv
+*.zip
+
+# Imagens de entrada (geralmente grandes demais para o git)
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# Outputs gerados pelo pipeline
+Artigo/
+Resultados/
+
+# Pesos de modelos baixados automaticamente
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# SO
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
