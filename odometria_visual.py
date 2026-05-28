@@ -393,7 +393,7 @@ class OdometriaVisual:
     # Correspondências de features
     # ------------------------------------------------------------------
 
-    def _obter_correspondencias(self, img1, img2):
+    def _obter_correspondencias(self, img1, img2, prev_features=None):
         """
         Detecta features e retorna pontos correspondentes entre img1 e img2.
 
@@ -401,13 +401,19 @@ class OdometriaVisual:
             pts1, pts2        : arrays Nx2 float32
             kpt_count1/2      : número de keypoints detectados
             match_count       : número de matches aceitos
+            curr_features     : tuple (kp2, des2) para a próxima iteração
         """
+        curr_features = None
         if self.detector_type in ('ORB', 'AKAZE'):
-            kp1, des1 = self.detector.detectAndCompute(img1, None)
+            if prev_features is not None:
+                kp1, des1 = prev_features
+            else:
+                kp1, des1 = self.detector.detectAndCompute(img1, None)
             kp2, des2 = self.detector.detectAndCompute(img2, None)
+            curr_features = (kp2, des2)
 
             if des1 is None or des2 is None:
-                return None, None, len(kp1), len(kp2), 0
+                return None, None, len(kp1) if kp1 else 0, len(kp2) if kp2 else 0, 0, curr_features
 
             nn_matches = self.matcher.knnMatch(des1, des2, k=2)
             ratio = self.config['matcher_params']['nn_match_ratio']
@@ -415,7 +421,7 @@ class OdometriaVisual:
 
             pts1 = np.float32([kp1[m.queryIdx].pt for m in good])
             pts2 = np.float32([kp2[m.trainIdx].pt for m in good])
-            return pts1, pts2, len(kp1), len(kp2), len(good)
+            return pts1, pts2, len(kp1), len(kp2), len(good), curr_features
 
         elif self.detector_type == 'SUPERPOINT':
             t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
@@ -430,7 +436,7 @@ class OdometriaVisual:
 
             pts1 = kp1[matches[:, 0]].cpu().numpy()
             pts2 = kp2[matches[:, 1]].cpu().numpy()
-            return pts1, pts2, len(kp1), len(kp2), len(matches)
+            return pts1, pts2, len(kp1), len(kp2), len(matches), None
 
         elif self.detector_type in ('LOFTR', 'MATCHFORMER'):
             t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
@@ -442,9 +448,9 @@ class OdometriaVisual:
             pts1 = corr['keypoints0'].cpu().numpy()
             pts2 = corr['keypoints1'].cpu().numpy()
             n = len(pts1)
-            return pts1, pts2, n, n, n
+            return pts1, pts2, n, n, n, None
 
-        return None, None, 0, 0, 0
+        return None, None, 0, 0, 0, None
 
     # ------------------------------------------------------------------
     # Helpers de cálculo
@@ -471,6 +477,35 @@ class OdometriaVisual:
     # ------------------------------------------------------------------
     # Pipeline principal
     # ------------------------------------------------------------------
+
+    def _calculate_metrics(self, i, est_lat, est_lon):
+        """Calcula as métricas de distância real e erro acumulado."""
+        dist_real_atual = calcula_distancia_latlon(
+            self.lat_real_list[i],     self.lon_real_list[i],
+            self.lat_real_list[i + 1], self.lon_real_list[i + 1]
+        )
+        erro_acum = calcula_distancia_latlon(
+            self.lat_real_list[i + 1], self.lon_real_list[i + 1],
+            est_lat, est_lon
+        )
+        return dist_real_atual, erro_acum
+
+    def _process_frame_pose(self, pts1, pts2):
+        """Calcula a pose (R, t) e inliers a partir das correspondências."""
+        E, mask_e = cv.findEssentialMat(
+            pts1, pts2, focal=self.fx, pp=(self.cx, self.cy),
+            method=cv.RANSAC, prob=0.999, threshold=1.0
+        )
+        inl1 = pts1[mask_e.ravel() == 1]
+        inl2 = pts2[mask_e.ravel() == 1]
+
+        if len(inl1) < 5:
+            return None, None, None, None
+
+        _, R, t, _ = cv.recoverPose(
+            E, inl1, inl2, focal=self.fx, pp=(self.cx, self.cy)
+        )
+        return inl1, inl2, R, t
 
     def executar(self):
         """Executa o pipeline completo de odometria visual."""
@@ -501,13 +536,14 @@ class OdometriaVisual:
             ax.legend()
 
         print("\nIniciando o loop de odometria...")
-        colunas = ["IMG","KPT1","KPT2","MATCHES","INLIERS",
-                   "DIST_REAL","DIST_EST","ERRO_ACUM(m)","TEMPO(s)"]
-        Resultados = DataFrame(columns=colunas)
-        print("IMG\tKPT1\tKPT2\tMATCHES\tINLIERS\t\tDIST_REAL\tDIST_EST\tERRO_ACUM(m)\tTEMPO(s)")
+        resultados_list = []
+        if self.config['display'].get('print_console', True):
+            print("IMG\tKPT1\tKPT2\tMATCHES\tINLIERS\t\tDIST_REAL\tDIST_EST\tERRO_ACUM(m)\tTEMPO(s)")
 
         # --- Loop principal ---
         num_frames = len(self.imgs_list)
+        prev_features = None
+
         for i in range(num_frames - 1):
             t0 = time.time()
 
@@ -515,29 +551,21 @@ class OdometriaVisual:
             curr_img = self.imgs_list[i + 1]
 
             # 1. Correspondências
-            pts1, pts2, kpt1, kpt2, n_matches = self._obter_correspondencias(
-                prev_img, curr_img
+            pts1, pts2, kpt1, kpt2, n_matches, curr_features = self._obter_correspondencias(
+                prev_img, curr_img, prev_features
             )
+            prev_features = curr_features
             if pts1 is None or len(pts1) < 8:
                 print(f"Frame {i}: poucas correspondências. Pulando.")
                 continue
 
             # 2. Matriz Essencial → pose
-            E, mask_e = cv.findEssentialMat(
-                pts1, pts2, focal=self.fx, pp=(self.cx, self.cy),
-                method=cv.RANSAC, prob=0.999, threshold=1.0
-            )
-            inl1 = pts1[mask_e.ravel() == 1]
-            inl2 = pts2[mask_e.ravel() == 1]
-            n_inliers = len(inl1)
-
-            if n_inliers < 5:
+            result_pose = self._process_frame_pose(pts1, pts2)
+            if result_pose[0] is None:
                 print(f"Frame {i}: poucos inliers após RANSAC. Pulando.")
                 continue
-
-            _, R, t, _ = cv.recoverPose(
-                E, inl1, inl2, focal=self.fx, pp=(self.cx, self.cy)
-            )
+            inl1, inl2, R, t = result_pose
+            n_inliers = len(inl1)
 
             # 3. Escala via GSD
             dist_est_atual = self._calcula_deslocamento_escala(
@@ -572,23 +600,21 @@ class OdometriaVisual:
             lon_est_list.append(est_lon)
 
             # 7. Métricas
-            dist_real_atual = calcula_distancia_latlon(
-                self.lat_real_list[i],     self.lon_real_list[i],
-                self.lat_real_list[i + 1], self.lon_real_list[i + 1]
-            )
+            dist_real_atual, erro_acum = self._calculate_metrics(i, est_lat, est_lon)
             dist_real_total += dist_real_atual
-            erro_acum = calcula_distancia_latlon(
-                self.lat_real_list[i + 1], self.lon_real_list[i + 1],
-                est_lat, est_lon
-            )
 
             elapsed = time.time() - t0
-            print(f'{i}\t{kpt1}\t{kpt2}\t{n_matches}\t{n_inliers}\t\t'
-                  f'{dist_real_atual:8.2f}\t{dist_est_atual:8.2f}\t'
-                  f'{erro_acum:8.2f}\t\t{elapsed:.2f}')
-            Resultados.loc[i] = [i, kpt1, kpt2, n_matches, n_inliers,
-                                  dist_real_atual, dist_est_atual,
-                                  erro_acum, elapsed]
+            if self.config['display'].get('print_console', True):
+                print(f'{i}\t{kpt1}\t{kpt2}\t{n_matches}\t{n_inliers}\t\t'
+                      f'{dist_real_atual:8.2f}\t{dist_est_atual:8.2f}\t'
+                      f'{erro_acum:8.2f}\t\t{elapsed:.2f}')
+
+            resultados_list.append({
+                "IMG": i, "KPT1": kpt1, "KPT2": kpt2,
+                "MATCHES": n_matches, "INLIERS": n_inliers,
+                "DIST_REAL": dist_real_atual, "DIST_EST": dist_est_atual,
+                "ERRO_ACUM(m)": erro_acum, "TEMPO(s)": elapsed
+            })
 
             # 8. Plotagem
             x_r, y_r = self._latlon_to_xy(
@@ -615,6 +641,8 @@ class OdometriaVisual:
                     break
 
         # --- Finalização ---
+        Resultados = DataFrame(resultados_list) if resultados_list else DataFrame()
+
         if self.config['display']['show_images']:
             cv.destroyAllWindows()
         if show_plot:
