@@ -111,7 +111,7 @@ def montar_config(cfg: dict) -> dict:
         "camera_params":      resolver_camera(cfg),
         "matcher_params":     cfg.get("matcher", {"nn_match_ratio": 0.8}),
         "detector_params":    resolver_detector_params(cfg),
-        "display":            cfg.get("display", {"show_plot": True, "show_images": False}),
+        "display":            cfg.get("display", {"show_plot": True, "show_images": False, "print_console": True}),
         "use_map_matching":   mm.get("enabled", False),
         "map_match_interval": mm.get("interval", 1),
         "roi_size_m":         mm.get("roi_size_m", 1000),
