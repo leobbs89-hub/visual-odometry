@@ -395,7 +395,7 @@ class TestORBCorrespondencias(unittest.TestCase):
         rng = np.random.default_rng(0)
         img1 = (rng.random((128, 128)) * 255).astype(np.uint8)
         img2 = np.roll(img1, 5, axis=1)   # shift horizontal pequeno
-        pts1, pts2, kp1, kp2, n = ov._obter_correspondencias(img1, img2)
+        pts1, pts2, kp1, kp2, n, curr_features = ov._obter_correspondencias(img1, img2)
         print(f"  ORB: {kp1} kp1, {kp2} kp2, {n} matches")
         self.assertIsNotNone(pts1)
 
@@ -403,7 +403,7 @@ class TestORBCorrespondencias(unittest.TestCase):
         ov = make_orb_ov()
         blank1 = np.zeros((64, 64), dtype=np.uint8)
         blank2 = np.zeros((64, 64), dtype=np.uint8)
-        pts1, pts2, kp1, kp2, n = ov._obter_correspondencias(blank1, blank2)
+        pts1, pts2, kp1, kp2, n, curr_features = ov._obter_correspondencias(blank1, blank2)
         # Imagens sem textura → sem descritores → retorna None
         self.assertIsNone(pts1)
 
