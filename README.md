@@ -71,7 +71,7 @@ pip install -r requirements.txt
 # Opcional — para detectores neurais
 pip install -r requirements-neural.txt
 git clone https://github.com/cvg/LightGlue.git && pip install -e LightGlue/
-git clone https://github.com/gaopengcuhk/MatchFormer.git
+git clone https://github.com/InSAI-Lab/MatchFormer.git
 ```
 
 ---

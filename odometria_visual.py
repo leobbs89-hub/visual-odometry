@@ -54,7 +54,7 @@ if caminho_matchformer not in sys.path:
     sys.path.insert(0, caminho_matchformer)
 
 try:
-    from matchformer import MatchFormer
+    from model.matchformer import Matchformer
     MATCHFORMER_AVAILABLE = True
 except ImportError:
     MATCHFORMER_AVAILABLE = False
@@ -257,12 +257,12 @@ class OdometriaVisual:
             if not MATCHFORMER_AVAILABLE:
                 raise ImportError(
                     "A biblioteca MatchFormer não foi encontrada.\n"
-                    "Clone com: git clone https://github.com/gaopengcuhk/MatchFormer.git\n"
+                    "Clone com: git clone https://github.com/InSAI-Lab/MatchFormer.git\n"
                     "Instale dependências: pip install -r requirements-neural.txt\n"
                     "Funciona em CPU — GPU não é obrigatória."
                 )
             params = self.config['detector_params'].get('matchformer', {})
-            self.matcher = MatchFormer(**params).eval().to(self.device)
+            self.matcher = Matchformer(**params).eval().to(self.device)
             print(f"  MatchFormer pronto em [{self.device}]")
 
         else:

@@ -56,7 +56,7 @@ if errorlevel 1 (
     echo [AVISO] Git nao encontrado. Instale em https://git-scm.com e
     echo         re-execute este script, ou clone manualmente:
     echo           git clone https://github.com/cvg/LightGlue.git
-    echo           git clone https://github.com/gaopengcuhk/MatchFormer.git
+    echo           git clone https://github.com/InSAI-Lab/MatchFormer.git
     goto :fim
 )
 
@@ -71,7 +71,7 @@ if not exist "LightGlue" (
 
 if not exist "MatchFormer" (
     echo  -^> Clonando MatchFormer ...
-    git clone https://github.com/gaopengcuhk/MatchFormer.git
+    git clone https://github.com/InSAI-Lab/MatchFormer.git
     echo [OK] MatchFormer clonado.
 ) else (
     echo [OK] MatchFormer ja existe, pulando clone.
