@@ -34,8 +34,7 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ├── requirements-neural.txt  # Dependências extras para redes neurais
 ├── install.sh               # Instalação automática Linux/macOS
 ├── install.bat              # Instalação automática Windows
-├── test_pipeline.py         # 36 testes unitários
-└── CLAUDE.md                # Contexto técnico para uso com AI assistants
+└── test_pipeline.py         # 36 testes unitários
 ```
 
 ---
