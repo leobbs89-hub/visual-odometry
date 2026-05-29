@@ -64,7 +64,7 @@ fi
 # MatchFormer — necessário para MATCHFORMER
 if [ ! -d "MatchFormer" ]; then
   echo " -> Clonando MatchFormer ..."
-  git clone https://github.com/gaopengcuhk/MatchFormer.git
+  git clone https://github.com/InSAI-Lab/MatchFormer.git
   echo "[OK] MatchFormer clonado."
 else
   echo "[OK] MatchFormer já existe, pulando clone."
