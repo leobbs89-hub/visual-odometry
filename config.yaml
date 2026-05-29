@@ -79,7 +79,8 @@ map_matching:
   interval:  1       # a cada quantos frames executar
   roi_size_m: 1000   # tamanho da região de busca no mapa (metros)
 
-# --- Visualização ---
+# --- Visualização e Logs ---
 display:
-  show_plot:   true    # gráfico de trajetória em tempo real
-  show_images: false   # janela com correspondências entre frames
+  show_plot:     true    # gráfico de trajetória em tempo real
+  show_images:   false   # janela com correspondências entre frames
+  print_console: true    # imprime os resultados frame a frame no console

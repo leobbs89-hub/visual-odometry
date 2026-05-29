@@ -34,8 +34,7 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ├── requirements-neural.txt  # Dependências extras para redes neurais
 ├── install.sh               # Instalação automática Linux/macOS
 ├── install.bat              # Instalação automática Windows
-├── test_pipeline.py         # 36 testes unitários
-└── CLAUDE.md                # Contexto técnico para uso com AI assistants
+└── test_pipeline.py         # 36 testes unitários
 ```
 
 ---
@@ -72,7 +71,7 @@ pip install -r requirements.txt
 # Opcional — para detectores neurais
 pip install -r requirements-neural.txt
 git clone https://github.com/cvg/LightGlue.git && pip install -e LightGlue/
-git clone https://github.com/gaopengcuhk/MatchFormer.git
+git clone https://github.com/InSAI-Lab/MatchFormer.git
 ```
 
 ---
