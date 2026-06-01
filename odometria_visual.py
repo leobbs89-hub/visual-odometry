@@ -64,26 +64,6 @@ except ImportError:
 # Funções auxiliares (independentes de estado)
 # ---------------------------------------------------------------------------
 
-def estima_latlon(start_lat, start_lon, yaw, distancia):
-    """
-    Estima a coordenada geográfica final a partir de um ponto inicial,
-    azimute (yaw) e distância.
-    """
-    g = Geod(ellps='WGS84')
-    end_lon, end_lat, _ = g.fwd(start_lon, start_lat, yaw, distancia,
-                                 return_back_azimuth=False)
-    return end_lat, end_lon
-
-
-def calcula_distancia_latlon(start_lat, start_lon, end_lat, end_lon):
-    """
-    Calcula a distância geodésica entre dois pontos (Lat/Lon) em metros.
-    """
-    g = Geod(ellps='WGS84')
-    _, _, dist = g.inv(start_lon, start_lat, end_lon, end_lat)
-    return dist
-
-
 def criar_caminho_kml(lat_list, lon_list, file_path):
     """
     Cria um arquivo KML a partir de listas de coordenadas para visualização
@@ -160,6 +140,9 @@ class OdometriaVisual:
         self.height_list    = []
         self.yaw_real_list  = []
         self.gsd_list       = []
+
+        # Geod object caching
+        self.geod = Geod(ellps='WGS84')
 
         self._inicializar_detector_matcher()
 
@@ -456,6 +439,22 @@ class OdometriaVisual:
     # Helpers de cálculo
     # ------------------------------------------------------------------
 
+    def estima_latlon(self, start_lat, start_lon, yaw, distancia):
+        """
+        Estima a coordenada geográfica final a partir de um ponto inicial,
+        azimute (yaw) e distância.
+        """
+        end_lon, end_lat, _ = self.geod.fwd(start_lon, start_lat, yaw, distancia,
+                                           return_back_azimuth=False)
+        return end_lat, end_lon
+
+    def calcula_distancia_latlon(self, start_lat, start_lon, end_lat, end_lon):
+        """
+        Calcula a distância geodésica entre dois pontos (Lat/Lon) em metros.
+        """
+        _, _, dist = self.geod.inv(start_lon, start_lat, end_lon, end_lat)
+        return dist
+
     @staticmethod
     def _calcula_deslocamento_escala(pts1, pts2, gsd):
         """
@@ -480,11 +479,11 @@ class OdometriaVisual:
 
     def _calculate_metrics(self, i, est_lat, est_lon):
         """Calcula as métricas de distância real e erro acumulado."""
-        dist_real_atual = calcula_distancia_latlon(
+        dist_real_atual = self.calcula_distancia_latlon(
             self.lat_real_list[i],     self.lon_real_list[i],
             self.lat_real_list[i + 1], self.lon_real_list[i + 1]
         )
-        erro_acum = calcula_distancia_latlon(
+        erro_acum = self.calcula_distancia_latlon(
             self.lat_real_list[i + 1], self.lon_real_list[i + 1],
             est_lat, est_lon
         )
@@ -581,7 +580,7 @@ class OdometriaVisual:
             yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
 
             # 5. Nova posição estimada
-            est_lat, est_lon = estima_latlon(
+            est_lat, est_lon = self.estima_latlon(
                 lat_est_list[i], lon_est_list[i],
                 yaw_acumulado_est, dist_est_atual
             )
