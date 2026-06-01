@@ -19,7 +19,7 @@ from pyproj import Geod
 import rasterio
 from rasterio.windows import from_bounds
 from pyproj import Transformer
-from geopy.distance import geodesic, distance
+from geopy.distance import distance
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,6 @@ except ImportError:
 
 # LoFTR (via kornia)
 try:
-    import kornia
     from kornia.feature import LoFTR
     KORNIA_AVAILABLE = True
 except ImportError:
@@ -60,7 +59,9 @@ except ImportError:
     MATCHFORMER_AVAILABLE = False
 
 
-
+# ---------------------------------------------------------------------------
+# Funções auxiliares (independentes de estado)
+# ---------------------------------------------------------------------------
 
 def criar_caminho_kml(lat_list, lon_list, file_path):
     """
@@ -139,7 +140,7 @@ class OdometriaVisual:
         self.yaw_real_list  = []
         self.gsd_list       = []
 
-        # Cache do objeto Geod para cálculos geodésicos
+        # Geod object caching
         self.geod = Geod(ellps='WGS84')
 
         self._inicializar_detector_matcher()
@@ -374,6 +375,10 @@ class OdometriaVisual:
     # Correspondências de features
     # ------------------------------------------------------------------
 
+    def _img_to_tensor(self, img):
+        """Converte imagem numpy para tensor PyTorch preparado para modelos neurais."""
+        return torch.from_numpy(img).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+
     def _obter_correspondencias(self, img1, img2, prev_features=None):
         """
         Detecta features e retorna pontos correspondentes entre img1 e img2.
@@ -405,8 +410,8 @@ class OdometriaVisual:
             return pts1, pts2, len(kp1), len(kp2), len(good), curr_features
 
         elif self.detector_type == 'SUPERPOINT':
-            t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
-            t2 = torch.from_numpy(img2).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+            t1 = self._img_to_tensor(img1)
+            t2 = self._img_to_tensor(img2)
 
             feats1, feats2, matches01 = match_pair(
                 self.detector, self.matcher, t1, t2
@@ -420,8 +425,8 @@ class OdometriaVisual:
             return pts1, pts2, len(kp1), len(kp2), len(matches), None
 
         elif self.detector_type in ('LOFTR', 'MATCHFORMER'):
-            t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
-            t2 = torch.from_numpy(img2).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+            t1 = self._img_to_tensor(img1)
+            t2 = self._img_to_tensor(img2)
 
             with torch.inference_mode():
                 corr = self.matcher({'image0': t1, 'image1': t2})
@@ -437,6 +442,22 @@ class OdometriaVisual:
     # Helpers de cálculo
     # ------------------------------------------------------------------
 
+    def estima_latlon(self, start_lat, start_lon, yaw, distancia):
+        """
+        Estima a coordenada geográfica final a partir de um ponto inicial,
+        azimute (yaw) e distância.
+        """
+        end_lon, end_lat, _ = self.geod.fwd(start_lon, start_lat, yaw, distancia,
+                                           return_back_azimuth=False)
+        return end_lat, end_lon
+
+    def calcula_distancia_latlon(self, start_lat, start_lon, end_lat, end_lon):
+        """
+        Calcula a distância geodésica entre dois pontos (Lat/Lon) em metros.
+        """
+        _, _, dist = self.geod.inv(start_lon, start_lat, end_lon, end_lat)
+        return dist
+
     @staticmethod
     def _calcula_deslocamento_escala(pts1, pts2, gsd):
         """
@@ -446,22 +467,6 @@ class OdometriaVisual:
         deslocamentos = [np.linalg.norm(p1 - p2) * gsd
                          for p1, p2 in zip(pts1, pts2)]
         return float(np.median(deslocamentos)) if deslocamentos else 0.0
-
-    def estima_latlon(self, start_lat, start_lon, yaw, distancia):
-        """
-        Estima a coordenada geográfica final a partir de um ponto inicial,
-        azimute (yaw) e distância.
-        """
-        end_lon, end_lat, _ = self.geod.fwd(start_lon, start_lat, yaw, distancia,
-                                            return_back_azimuth=False)
-        return end_lat, end_lon
-
-    def calcula_distancia_latlon(self, start_lat, start_lon, end_lat, end_lon):
-        """
-        Calcula a distância geodésica entre dois pontos (Lat/Lon) em metros.
-        """
-        _, _, dist = self.geod.inv(start_lon, start_lat, end_lon, end_lat)
-        return dist
 
     def _latlon_to_xy(self, lat, lon):
         """

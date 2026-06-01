@@ -4,7 +4,7 @@ Cobre: YAML, config, constantes OpenCV, argumentos CLI, detector ORB/AKAZE,
        resolução de device (auto/cpu/cuda), e o bloco de imports neurais.
 """
 
-import sys, os, tempfile, textwrap, subprocess, unittest
+import sys, os, tempfile, textwrap, unittest
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
@@ -205,7 +205,6 @@ class TestResolverDevice(unittest.TestCase):
     def test_cpu_forced(self):
         if not TORCH_AVAILABLE:
             self.skipTest("torch não instalado")
-        import torch
         ov = make_orb_ov(device="cpu")
         self.assertEqual(str(ov.device), "cpu")
 
@@ -282,7 +281,6 @@ class TestSuperPointCPU(unittest.TestCase):
 
     def test_superpoint_uses_cpu_device(self):
         """Verifica que SuperPoint e LightGlue sao enviados para device=cpu."""
-        import torch
         from unittest.mock import patch
         import odometria_visual as ov_mod
 
@@ -363,9 +361,8 @@ class TestSuperPointCPU(unittest.TestCase):
 
 
 class TestGeoHelpers(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ov = make_orb_ov()
+    def setUp(self):
+        self.ov = make_orb_ov()
 
     def test_estima_latlon_north(self):
         lat, lon = self.ov.estima_latlon(-23.0, -46.0, 0.0, 1000.0)
@@ -422,6 +419,41 @@ class TestCalcDeslocamento(unittest.TestCase):
         self.assertEqual(d, 0.0)
 
 
+class TestCalculateMetrics(unittest.TestCase):
+    def test_calculate_metrics_correctness(self):
+        ov = make_orb_ov()
+        # Mock lat_real_list e lon_real_list
+        ov.lat_real_list = np.array([-23.0, -23.001])
+        ov.lon_real_list = np.array([-46.0, -46.001])
+
+        # Posição estimada igual ao ground truth real no índice i+1 para erro zero
+        est_lat = -23.001
+        est_lon = -46.001
+
+        dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
+
+        # Distância esperada entre ( -23.0, -46.0) e (-23.001, -46.001)
+        expected_dist = ov.calcula_distancia_latlon(-23.0, -46.0, -23.001, -46.001)
+
+        self.assertAlmostEqual(dist_real, expected_dist)
+        self.assertAlmostEqual(erro_acum, 0.0)
+
+    def test_calculate_metrics_with_error(self):
+        ov = make_orb_ov()
+        ov.lat_real_list = np.array([-23.0, -23.001])
+        ov.lon_real_list = np.array([-46.0, -46.001])
+
+        # Posição estimada com um pequeno erro em relação ao real
+        est_lat = -23.0011
+        est_lon = -46.0011
+
+        dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
+
+        expected_erro = ov.calcula_distancia_latlon(-23.001, -46.001, -23.0011, -46.0011)
+
+        self.assertAlmostEqual(erro_acum, expected_erro)
+
+
 class TestBenchmarkGeod(unittest.TestCase):
     """
     Benchmark para medir o ganho de performance com o cache do objeto Geod.
@@ -445,9 +477,8 @@ class TestBenchmarkGeod(unittest.TestCase):
         print(f"  estima_latlon: {total_estima:.4f}s")
         print(f"  calcula_distancia_latlon: {total_calcula:.4f}s")
 
-        # O objetivo é garantir que o tempo seja razoável.
-        # Como não temos o baseline aqui dentro, apenas exibimos.
-        self.assertLess(total_estima, 2.0) # Esperado ser muito rápido com cache
+        # O objetivo é garantir que o tempo seja razoável com cache.
+        self.assertLess(total_estima, 2.0)
         self.assertLess(total_calcula, 2.0)
 
 
