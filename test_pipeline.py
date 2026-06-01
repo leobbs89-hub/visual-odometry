@@ -420,5 +420,40 @@ class TestCalcDeslocamento(unittest.TestCase):
         self.assertEqual(d, 0.0)
 
 
+class TestCalculateMetrics(unittest.TestCase):
+    def test_calculate_metrics_correctness(self):
+        ov = make_orb_ov()
+        # Mock lat_real_list e lon_real_list
+        ov.lat_real_list = np.array([-23.0, -23.001])
+        ov.lon_real_list = np.array([-46.0, -46.001])
+
+        # Posição estimada igual ao ground truth real no índice i+1 para erro zero
+        est_lat = -23.001
+        est_lon = -46.001
+
+        dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
+
+        # Distância esperada entre ( -23.0, -46.0) e (-23.001, -46.001)
+        expected_dist = calcula_distancia_latlon(-23.0, -46.0, -23.001, -46.001)
+
+        self.assertAlmostEqual(dist_real, expected_dist)
+        self.assertAlmostEqual(erro_acum, 0.0)
+
+    def test_calculate_metrics_with_error(self):
+        ov = make_orb_ov()
+        ov.lat_real_list = np.array([-23.0, -23.001])
+        ov.lon_real_list = np.array([-46.0, -46.001])
+
+        # Posição estimada com um pequeno erro em relação ao real
+        est_lat = -23.0011
+        est_lon = -46.0011
+
+        dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
+
+        expected_erro = calcula_distancia_latlon(-23.001, -46.001, -23.0011, -46.0011)
+
+        self.assertAlmostEqual(erro_acum, expected_erro)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
