@@ -392,6 +392,10 @@ class OdometriaVisual:
     # Correspondências de features
     # ------------------------------------------------------------------
 
+    def _img_to_tensor(self, img):
+        """Converte imagem numpy para tensor PyTorch preparado para modelos neurais."""
+        return torch.from_numpy(img).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+
     def _obter_correspondencias(self, img1, img2, prev_features=None):
         """
         Detecta features e retorna pontos correspondentes entre img1 e img2.
@@ -423,8 +427,8 @@ class OdometriaVisual:
             return pts1, pts2, len(kp1), len(kp2), len(good), curr_features
 
         elif self.detector_type == 'SUPERPOINT':
-            t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
-            t2 = torch.from_numpy(img2).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+            t1 = self._img_to_tensor(img1)
+            t2 = self._img_to_tensor(img2)
 
             feats1, feats2, matches01 = match_pair(
                 self.detector, self.matcher, t1, t2
@@ -438,8 +442,8 @@ class OdometriaVisual:
             return pts1, pts2, len(kp1), len(kp2), len(matches), None
 
         elif self.detector_type in ('LOFTR', 'MATCHFORMER'):
-            t1 = torch.from_numpy(img1).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
-            t2 = torch.from_numpy(img2).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
+            t1 = self._img_to_tensor(img1)
+            t2 = self._img_to_tensor(img2)
 
             with torch.inference_mode():
                 corr = self.matcher({'image0': t1, 'image1': t2})
