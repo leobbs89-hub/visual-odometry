@@ -19,7 +19,7 @@ from pyproj import Geod
 import rasterio
 from rasterio.windows import from_bounds
 from pyproj import Transformer
-from geopy.distance import geodesic, distance
+from geopy.distance import distance
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,6 @@ except ImportError:
 
 # LoFTR (via kornia)
 try:
-    import kornia
     from kornia.feature import LoFTR
     KORNIA_AVAILABLE = True
 except ImportError:

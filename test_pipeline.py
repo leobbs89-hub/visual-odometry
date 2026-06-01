@@ -4,7 +4,7 @@ Cobre: YAML, config, constantes OpenCV, argumentos CLI, detector ORB/AKAZE,
        resolução de device (auto/cpu/cuda), e o bloco de imports neurais.
 """
 
-import sys, os, tempfile, textwrap, subprocess, unittest
+import sys, os, tempfile, textwrap, unittest
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
@@ -207,7 +207,6 @@ class TestResolverDevice(unittest.TestCase):
     def test_cpu_forced(self):
         if not TORCH_AVAILABLE:
             self.skipTest("torch não instalado")
-        import torch
         ov = make_orb_ov(device="cpu")
         self.assertEqual(str(ov.device), "cpu")
 
@@ -284,7 +283,6 @@ class TestSuperPointCPU(unittest.TestCase):
 
     def test_superpoint_uses_cpu_device(self):
         """Verifica que SuperPoint e LightGlue sao enviados para device=cpu."""
-        import torch
         from unittest.mock import patch
         import odometria_visual as ov_mod
 
