@@ -16,8 +16,6 @@ import main as M
 from odometria_visual import (
     OdometriaVisual,
     TORCH_AVAILABLE,
-    estima_latlon,
-    calcula_distancia_latlon,
     criar_caminho_kml,
 )
 
@@ -365,16 +363,20 @@ class TestSuperPointCPU(unittest.TestCase):
 
 
 class TestGeoHelpers(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ov = make_orb_ov()
+
     def test_estima_latlon_north(self):
-        lat, lon = estima_latlon(-23.0, -46.0, 0.0, 1000.0)
+        lat, lon = self.ov.estima_latlon(-23.0, -46.0, 0.0, 1000.0)
         self.assertGreater(lat, -23.0)   # moveu para norte
 
     def test_calcula_distancia_zero(self):
-        d = calcula_distancia_latlon(-23.0, -46.0, -23.0, -46.0)
+        d = self.ov.calcula_distancia_latlon(-23.0, -46.0, -23.0, -46.0)
         self.assertAlmostEqual(d, 0.0, places=3)
 
     def test_calcula_distancia_positiva(self):
-        d = calcula_distancia_latlon(-23.0, -46.0, -22.0, -46.0)
+        d = self.ov.calcula_distancia_latlon(-23.0, -46.0, -22.0, -46.0)
         self.assertGreater(d, 0)
 
     def test_kml_file_created(self):
@@ -418,6 +420,35 @@ class TestCalcDeslocamento(unittest.TestCase):
     def test_empty_returns_zero(self):
         d = OdometriaVisual._calcula_deslocamento_escala([], [], gsd=1.0)
         self.assertEqual(d, 0.0)
+
+
+class TestBenchmarkGeod(unittest.TestCase):
+    """
+    Benchmark para medir o ganho de performance com o cache do objeto Geod.
+    """
+    def test_performance_gain(self):
+        import time
+        ov = make_orb_ov()
+        iterations = 100000
+
+        start_time = time.perf_counter()
+        for _ in range(iterations):
+            ov.estima_latlon(-23.0, -46.0, 45.0, 100.0)
+        total_estima = time.perf_counter() - start_time
+
+        start_time = time.perf_counter()
+        for _ in range(iterations):
+            ov.calcula_distancia_latlon(-23.0, -46.0, -23.1, -46.1)
+        total_calcula = time.perf_counter() - start_time
+
+        print(f"\n[BENCHMARK] {iterations} iterações:")
+        print(f"  estima_latlon: {total_estima:.4f}s")
+        print(f"  calcula_distancia_latlon: {total_calcula:.4f}s")
+
+        # O objetivo é garantir que o tempo seja razoável.
+        # Como não temos o baseline aqui dentro, apenas exibimos.
+        self.assertLess(total_estima, 2.0) # Esperado ser muito rápido com cache
+        self.assertLess(total_calcula, 2.0)
 
 
 if __name__ == "__main__":
