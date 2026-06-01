@@ -5,6 +5,7 @@ Cobre: YAML, config, constantes OpenCV, argumentos CLI, detector ORB/AKAZE,
 """
 
 import sys, os, tempfile, textwrap, subprocess, unittest
+import unittest.mock
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
@@ -362,6 +363,53 @@ class TestSuperPointCPU(unittest.TestCase):
 
         self.assertEqual(str(ov.device), "cpu")
         print("  device=auto sem GPU resolveu para cpu")
+
+
+class TestMissingDependencies(unittest.TestCase):
+    def test_resolver_device_returns_none_when_torch_missing(self):
+        with unittest.mock.patch('odometria_visual.TORCH_AVAILABLE', False):
+            # Chamada estática
+            dev = OdometriaVisual._resolver_device('auto')
+            self.assertIsNone(dev)
+
+    def test_superpoint_raises_importerror_when_torch_missing(self):
+        cfg = yaml.safe_load(MINIMAL_YAML)
+        cfg["detector"] = "SUPERPOINT"
+        config = M.montar_config(cfg)
+        config["paths"] = {
+            "image_path": "/tmp", "ground_truth_path": "/tmp/gt.csv",
+            "output_dir": "/tmp", "map_tif_path": "/tmp/map.tif",
+        }
+        with unittest.mock.patch('odometria_visual.TORCH_AVAILABLE', False):
+            with self.assertRaises(ImportError) as cm:
+                OdometriaVisual(config)
+            self.assertIn("PyTorch e LightGlue são necessários", str(cm.exception))
+
+    def test_loftr_raises_importerror_when_kornia_missing(self):
+        cfg = yaml.safe_load(MINIMAL_YAML)
+        cfg["detector"] = "LOFTR"
+        config = M.montar_config(cfg)
+        config["paths"] = {
+            "image_path": "/tmp", "ground_truth_path": "/tmp/gt.csv",
+            "output_dir": "/tmp", "map_tif_path": "/tmp/map.tif",
+        }
+        with unittest.mock.patch('odometria_visual.KORNIA_AVAILABLE', False):
+            with self.assertRaises(ImportError) as cm:
+                OdometriaVisual(config)
+            self.assertIn("Kornia e PyTorch são necessários", str(cm.exception))
+
+    def test_matchformer_raises_importerror_when_matchformer_missing(self):
+        cfg = yaml.safe_load(MINIMAL_YAML)
+        cfg["detector"] = "MATCHFORMER"
+        config = M.montar_config(cfg)
+        config["paths"] = {
+            "image_path": "/tmp", "ground_truth_path": "/tmp/gt.csv",
+            "output_dir": "/tmp", "map_tif_path": "/tmp/map.tif",
+        }
+        with unittest.mock.patch('odometria_visual.MATCHFORMER_AVAILABLE', False):
+            with self.assertRaises(ImportError) as cm:
+                OdometriaVisual(config)
+            self.assertIn("A biblioteca MatchFormer não foi encontrada", str(cm.exception))
 
 
 class TestGeoHelpers(unittest.TestCase):
