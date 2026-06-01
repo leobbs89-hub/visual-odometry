@@ -16,8 +16,6 @@ import main as M
 from odometria_visual import (
     OdometriaVisual,
     TORCH_AVAILABLE,
-    estima_latlon,
-    calcula_distancia_latlon,
     criar_caminho_kml,
 )
 
@@ -363,16 +361,19 @@ class TestSuperPointCPU(unittest.TestCase):
 
 
 class TestGeoHelpers(unittest.TestCase):
+    def setUp(self):
+        self.ov = make_orb_ov()
+
     def test_estima_latlon_north(self):
-        lat, lon = estima_latlon(-23.0, -46.0, 0.0, 1000.0)
+        lat, lon = self.ov.estima_latlon(-23.0, -46.0, 0.0, 1000.0)
         self.assertGreater(lat, -23.0)   # moveu para norte
 
     def test_calcula_distancia_zero(self):
-        d = calcula_distancia_latlon(-23.0, -46.0, -23.0, -46.0)
+        d = self.ov.calcula_distancia_latlon(-23.0, -46.0, -23.0, -46.0)
         self.assertAlmostEqual(d, 0.0, places=3)
 
     def test_calcula_distancia_positiva(self):
-        d = calcula_distancia_latlon(-23.0, -46.0, -22.0, -46.0)
+        d = self.ov.calcula_distancia_latlon(-23.0, -46.0, -22.0, -46.0)
         self.assertGreater(d, 0)
 
     def test_kml_file_created(self):
