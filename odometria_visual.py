@@ -464,9 +464,12 @@ class OdometriaVisual:
         Estima a distância percorrida (metros) a partir do deslocamento
         mediano dos pontos correspondentes (inliers) e do GSD.
         """
-        deslocamentos = [np.linalg.norm(p1 - p2) * gsd
-                         for p1, p2 in zip(pts1, pts2)]
-        return float(np.median(deslocamentos)) if deslocamentos else 0.0
+        if len(pts1) == 0:
+            return 0.0
+
+        # Vetorização da distância Euclidiana entre pares de pontos
+        deslocamentos = np.linalg.norm(pts1 - pts2, axis=1) * gsd
+        return float(np.median(deslocamentos))
 
     def _latlon_to_xy(self, lat, lon):
         """

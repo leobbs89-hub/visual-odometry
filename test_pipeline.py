@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np
 import cv2 as cv
 import yaml
+import time
 
 # Módulos a testar
 import main as M
@@ -433,7 +434,7 @@ class TestCalculateMetrics(unittest.TestCase):
         dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
 
         # Distância esperada entre ( -23.0, -46.0) e (-23.001, -46.001)
-        expected_dist = calcula_distancia_latlon(-23.0, -46.0, -23.001, -46.001)
+        expected_dist = ov.calcula_distancia_latlon(-23.0, -46.0, -23.001, -46.001)
 
         self.assertAlmostEqual(dist_real, expected_dist)
         self.assertAlmostEqual(erro_acum, 0.0)
@@ -449,10 +450,37 @@ class TestCalculateMetrics(unittest.TestCase):
 
         dist_real, erro_acum = ov._calculate_metrics(0, est_lat, est_lon)
 
-        expected_erro = calcula_distancia_latlon(-23.001, -46.001, -23.0011, -46.0011)
+        expected_erro = ov.calcula_distancia_latlon(-23.001, -46.001, -23.0011, -46.0011)
 
         self.assertAlmostEqual(erro_acum, expected_erro)
 
 
+def run_benchmark():
+    """Executa um benchmark simples para _calcula_deslocamento_escala."""
+    print("\n" + "="*30)
+    print("RUNNING PERFORMANCE BENCHMARK")
+    print("="*30)
+
+    n_points = 800
+    iterations = 1000
+    gsd = 0.5
+    pts1 = np.random.rand(n_points, 2).astype(np.float32)
+    pts2 = np.random.rand(n_points, 2).astype(np.float32)
+
+    # Warmup
+    _ = OdometriaVisual._calcula_deslocamento_escala(pts1, pts2, gsd)
+
+    start_time = time.perf_counter()
+    for _ in range(iterations):
+        _ = OdometriaVisual._calcula_deslocamento_escala(pts1, pts2, gsd)
+    end_time = time.perf_counter()
+
+    avg_time = (end_time - start_time) / iterations
+    print(f"Average time over {iterations} iterations with {n_points} points: {avg_time:.6f} seconds")
+    print("="*30 + "\n")
+
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    if "--benchmark" in sys.argv:
+        run_benchmark()
+    else:
+        unittest.main(verbosity=2)
