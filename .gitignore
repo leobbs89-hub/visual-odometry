@@ -53,3 +53,7 @@ desktop.ini
 # Logs
 *.log
 "CLAUDE.md" 
+
+# Configurações e testes locais
+config_pessoal.yaml
+test_pipeline.py

@@ -5,7 +5,6 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.8%2B-green?logo=opencv)
 ![PyTorch](https://img.shields.io/badge/PyTorch-CPU%20%7C%20GPU-orange?logo=pytorch)
-![Testes](https://img.shields.io/badge/Testes-36%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/Licença-MIT-lightgrey)
 
 ---
@@ -33,8 +32,7 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ├── requirements.txt         # Dependências base (ORB e AKAZE)
 ├── requirements-neural.txt  # Dependências extras para redes neurais
 ├── install.sh               # Instalação automática Linux/macOS
-├── install.bat              # Instalação automática Windows
-└── test_pipeline.py         # 36 testes unitários
+└── install.bat              # Instalação automática Windows
 ```
 
 ---
@@ -134,15 +132,6 @@ Salvas em `paths.output`:
 | `resultados_<DETECTOR>.csv` | Métricas por frame: keypoints, matches, erro acumulado, tempo |
 | `trajetoria_real.kml` | Ground truth para Google Earth |
 | `trajetoria_estimada_<DETECTOR>.kml` | Trajetória estimada para Google Earth |
-
----
-
-## Testes
-
-```bash
-python -m pytest test_pipeline.py -v
-# 36 testes — YAML, config, OpenCV, CLI, device, ORB, AKAZE, SuperPoint (mock)
-```
 
 ---
 
