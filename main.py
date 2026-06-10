@@ -66,10 +66,8 @@ def resolver_camera(cfg: dict) -> dict:
     """Calcula fx, fy, cx, cy a partir das dimensões e FOV da câmera."""
     cam = cfg["camera"]
     w, h = cam["width"], cam["height"]
-    #fx = w / 2 / np.tan(np.deg2rad(cam["h_fov"]) / 2)
-    fx = 865.1016*39/62.46
-    #fy = h / 2 / np.tan(np.deg2rad(cam["v_fov"]) / 2)
-    fy = 865.1016*39/62.46
+    fx = w / 2 / np.tan(np.deg2rad(cam["h_fov"]) / 2)
+    fy = h / 2 / np.tan(np.deg2rad(cam["v_fov"]) / 2)
     return {"fx": fx, "fy": fy, "cx": w / 2, "cy": h / 2}
 
 

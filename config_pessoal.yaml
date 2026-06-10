@@ -19,8 +19,8 @@ paths:
 camera:
   width:  640
   height: 640
-  h_fov:  71.56   # horizontal field of view (graus)
-  v_fov:  71.56   # vertical field of view (graus)
+  h_fov:  60   # horizontal field of view (graus)
+  v_fov:  60   # vertical field of view (graus)
 
 # --- Detector ---
 # Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
