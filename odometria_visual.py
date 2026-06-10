@@ -252,6 +252,36 @@ class OdometriaVisual:
                 f"Detector desconhecido: '{self.detector_type}'. "
                 "Escolha: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER"
             )
+        
+    # Adicione ou modifique estes métodos dentro da classe OdometriaVisual existente
+
+    def atualizar_detector_dinamico(self, tipo_descritor, parametros_dinamicos):
+        """
+        Reinstancia o detector OpenCV quadro a quadro com base na predição do SVM.
+        """
+        tipo = tipo_descritor.upper()
+
+        if tipo == "AKAZE":
+            # Combina os parâmetros fixos do YAML com o threshold dinâmico do SVM
+            thresh = parametros_dinamicos.get('akaze_threshold', 0.001)
+            self.detector = cv.AKAZE_create(
+                descriptor_type=int(self.config['parametros_akaze'].get('descriptor_type', 5)),
+                descriptor_size=int(self.config['parametros_akaze'].get('descriptor_size', 0)),
+                descriptor_channels=int(self.config['parametros_akaze'].get('descriptor_channels', 3)),
+                threshold=float(thresh),
+                nOctaves=int(self.config['parametros_akaze'].get('nOctaves', 4)),
+                nOctaveLayers=int(self.config['parametros_akaze'].get('nOctaveLayers', 4)),
+                diffusivity=int(self.config['parametros_akaze'].get('diffusivity', 1))
+            )
+
+        elif tipo == "ORB":
+            n_features = parametros_dinamicos.get('orb_nfeatures', 1500)
+            self.detector = cv.ORB_create(
+                nfeatures=int(n_features),
+                scaleFactor=float(self.config['parametros_orb'].get('scaleFactor', 1.2)),
+                nlevels=int(self.config['parametros_orb'].get('nlevels', 8)),
+                edgeThreshold=int(self.config['parametros_orb'].get('edgeThreshold', 31))
+            )
 
     # ------------------------------------------------------------------
     # Carregamento de dados
