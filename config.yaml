@@ -4,15 +4,14 @@
 # ============================================================
 
 # --- Caminhos ---
-# Use barras normais "/" mesmo no Windows, ou variáveis de ambiente.
-# Exemplo Linux/Mac : /home/usuario/dados/PMG
-# Exemplo Windows   : C:/Users/bbs_l/OneDrive/Leandro/ITA/PMG
+# Use barras normais "/" mesmo no Windows.
+# base_path: "." indica a raiz do próprio projeto.
 paths:
-  base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/PMG"
-  map_tif:        "Codigos/imagem_satelite.tif"        # relativo a base_path
-  images:         "Google earth/1500_2/Resized"        # relativo a base_path
-  ground_truth:   "Codigos/Coord-Heading-Elev_1500_2.csv"  # relativo a base_path
-  output:         "Artigo/Resultados/1500_2"           # relativo a base_path
+  base_path: "."
+  map_tif:        "data/map/map.tif"          # relativo a base_path
+  images:         "data/images"               # relativo a base_path
+  ground_truth:   "data/ground_truth.csv"     # relativo a base_path
+  output:         "results"                   # relativo a base_path
 
 # --- Câmera ---
 # Resolução e campo de visão em graus.
