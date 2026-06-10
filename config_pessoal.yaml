@@ -7,11 +7,11 @@
 # Use barras normais "/" mesmo no Windows.
 # base_path: "." indica a raiz do próprio projeto.
 paths:
-  base_path: "."
+  base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/PMG/Google earth/1500_05_QUADRADO"
   map_tif:        "data/map/map.tif"          # relativo a base_path
-  images:         "data/images"               # relativo a base_path
-  ground_truth:   "data/ground_truth.csv"     # relativo a base_path
-  output:         "results"                   # relativo a base_path
+  images:         "Resized"               # relativo a base_path
+  ground_truth:   "Coord-Heading-Elev_1500_0.5.csv"     # relativo a base_path
+  output:         "Results"                   # relativo a base_path
 
 # --- Câmera ---
 # Resolução e campo de visão em graus.
