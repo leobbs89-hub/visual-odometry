@@ -594,10 +594,6 @@ class OdometriaVisual:
                 params_otimizados = svm_classificador.obter_parametros_otimizados(classe_cenario)
                 self._atualizar_detector_via_svm(self.detector_type,params_otimizados)
                 
-                # Validação via terminal
-                param_ativo = params_otimizados['akaze_threshold'] if self.detector_type == 'AKAZE' else params_otimizados['orb_nfeatures']
-                print(f"[SVM INFO] Frame {i+1:04d} -> Classe Predita: {classe_cenario} | Parâmetro Injetado ({self.detector_type}): {param_ativo}")
-                
                 # Se prev_features existir, invalida para forçar o recálculo com o novo threshold
                 prev_features = None
 
