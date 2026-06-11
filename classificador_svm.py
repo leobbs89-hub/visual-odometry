@@ -39,7 +39,7 @@ class ClassificadorParametrosSVM:
         # Retorna a classe (ex: 0 para Baixo Contraste, 1 para Alto Contraste/Textura)
         return int(self.model.predict(caracteristicas)[0])
 
-    def mapear_classe_para_parametros(self, classe_predita):
+    def obter_parametros_otimizados(self, classe_predita):
         """
         Mapeia a saída do SVM para dicionários específicos de thresholds.
         """

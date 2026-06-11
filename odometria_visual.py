@@ -255,7 +255,7 @@ class OdometriaVisual:
         
     # Adicione ou modifique estes métodos dentro da classe OdometriaVisual existente
 
-    def atualizar_detector_dinamico(self, tipo_descritor, parametros_dinamicos):
+    def _atualizar_detector_via_svm(self, tipo_descritor, parametros_dinamicos):
         """
         Reinstancia o detector OpenCV quadro a quadro com base na predição do SVM.
         """
@@ -264,23 +264,25 @@ class OdometriaVisual:
         if tipo == "AKAZE":
             # Combina os parâmetros fixos do YAML com o threshold dinâmico do SVM
             thresh = parametros_dinamicos.get('akaze_threshold', 0.001)
+            params_akaze = self.config['detector_params'].get('akaze', {})
             self.detector = cv.AKAZE_create(
-                descriptor_type=int(self.config['parametros_akaze'].get('descriptor_type', 5)),
-                descriptor_size=int(self.config['parametros_akaze'].get('descriptor_size', 0)),
-                descriptor_channels=int(self.config['parametros_akaze'].get('descriptor_channels', 3)),
+                descriptor_type=int(params_akaze.get('descriptor_type', 5)),
+                descriptor_size=int(params_akaze.get('descriptor_size', 0)),
+                descriptor_channels=int(params_akaze.get('descriptor_channels', 3)),
                 threshold=float(thresh),
-                nOctaves=int(self.config['parametros_akaze'].get('nOctaves', 4)),
-                nOctaveLayers=int(self.config['parametros_akaze'].get('nOctaveLayers', 4)),
-                diffusivity=int(self.config['parametros_akaze'].get('diffusivity', 1))
+                nOctaves=int(params_akaze.get('nOctaves', 4)),
+                nOctaveLayers=int(params_akaze.get('nOctaveLayers', 4)),
+                diffusivity=int(params_akaze.get('diffusivity', 1))
             )
 
         elif tipo == "ORB":
             n_features = parametros_dinamicos.get('orb_nfeatures', 1500)
+            params_orb = self.config['detector_params'].get('orb', {})
             self.detector = cv.ORB_create(
                 nfeatures=int(n_features),
-                scaleFactor=float(self.config['parametros_orb'].get('scaleFactor', 1.2)),
-                nlevels=int(self.config['parametros_orb'].get('nlevels', 8)),
-                edgeThreshold=int(self.config['parametros_orb'].get('edgeThreshold', 31))
+                scaleFactor=float(params_orb.get('scaleFactor', 1.2)),
+                nlevels=int(params_orb.get('nlevels', 8)),
+                edgeThreshold=int(params_orb.get('edgeThreshold', 31))
             )
 
     # ------------------------------------------------------------------
@@ -545,7 +547,7 @@ class OdometriaVisual:
 
         # --- [INSERÇÃO SVM]: Inicialização do Classificador ---
         from classificador_svm import ClassificadorParametrosSVM
-        svm_classificador = ClassificadorParametrosSVM()
+        svm_classificador = ClassificadorParametrosSVM(caminho_modelo = "modelo_treinado_svm.pkl")
 
         # --- Inicialização ---
         lat_est_list = [self.lat_real_list[0]]
@@ -590,10 +592,10 @@ class OdometriaVisual:
             if self.detector_type in ('AKAZE', 'ORB'):
                 classe_cenario = svm_classificador.predizer_classe_cenario(curr_img)
                 params_otimizados = svm_classificador.obter_parametros_otimizados(classe_cenario)
-                self._atualizar_detector_via_svm(params_otimizados)
+                self._atualizar_detector_via_svm(self.detector_type,params_otimizados)
                 
                 # Validação via terminal
-                param_ativo = params_otimizados['threshold'] if self.detector_type == 'AKAZE' else params_otimizados['nfeatures']
+                param_ativo = params_otimizados['akaze_threshold'] if self.detector_type == 'AKAZE' else params_otimizados['orb_nfeatures']
                 print(f"[SVM INFO] Frame {i+1:04d} -> Classe Predita: {classe_cenario} | Parâmetro Injetado ({self.detector_type}): {param_ativo}")
                 
                 # Se prev_features existir, invalida para forçar o recálculo com o novo threshold
