@@ -94,6 +94,7 @@ map_matching:
 
 # --- Visualização e Logs ---
 display:
-  show_plot:     true    # gráfico de trajetória em tempo real
-  show_images:   false   # janela com correspondências entre frames
-  print_console: true    # imprime os resultados frame a frame no console
+  show_plot:          true    # gráfico de trajetória em tempo real
+  show_images:        false   # janela com correspondências entre frames
+  print_console:      true    # imprime os resultados frame a frame no console
+  show_map_matching:  true    # janela OpenCV com correspondências do map matching

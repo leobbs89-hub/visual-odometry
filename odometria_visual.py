@@ -605,7 +605,42 @@ class OdometriaVisual:
             novo_yaw = (yaw_acumulado + delta_ang) % 360
             nova_escala = escala_otima
 
+        self._last_map_match_data = (img_aerea, patch_otimo, pts1, pts2, n_inliers)
         return lat_corr, lon_corr, novo_yaw, nova_escala, n_inliers, True
+
+    def _visualizar_map_matching(self, i, lat_antes, lon_antes, lat_depois, lon_depois):
+        """Janela OpenCV side-by-side: imagem aérea (esq.) vs patch satelital (dir.)."""
+        if not hasattr(self, '_last_map_match_data'):
+            return
+
+        img_aerea, patch, pts1, pts2, n_inliers = self._last_map_match_data
+
+        kp1 = [cv.KeyPoint(x=float(p[0]), y=float(p[1]), size=4) for p in pts1]
+        kp2 = [cv.KeyPoint(x=float(p[0]), y=float(p[1]), size=4) for p in pts2]
+        matches = [cv.DMatch(k, k, 0) for k in range(len(kp1))]
+
+        img_vis = cv.drawMatches(
+            img_aerea, kp1, patch, kp2, matches, None,
+            matchColor=(0, 255, 0),
+            singlePointColor=(255, 0, 0),
+            flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+        )
+
+        corr_dist = self.calcula_distancia_latlon(
+            lat_antes, lon_antes, lat_depois, lon_depois
+        )
+        h_vis = img_vis.shape[0]
+        cv.putText(img_vis,
+                   f"Frame {i} | Inliers: {n_inliers} | Correcao: {corr_dist:.1f} m",
+                   (10, 22), cv.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+        cv.putText(img_vis, "Imagem Aerea",
+                   (10, h_vis - 8), cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        cv.putText(img_vis, "Patch Satelital",
+                   (img_aerea.shape[1] + 10, h_vis - 8),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+        cv.imshow("Map Matching — Correspondencias", img_vis)
+        cv.waitKey(1)
 
     # ------------------------------------------------------------------
     # Correspondências de features
@@ -784,9 +819,11 @@ class OdometriaVisual:
             ax.set_ylabel("Y (m)")
             line_est,  = ax.plot(x_est_list,  y_est_list,  'r-', label='Estimado')
             line_real, = ax.plot(x_real_list, y_real_list, 'b-', label='Real')
+            line_map,  = ax.plot([], [], 'g^', markersize=8, label='Map Matching', zorder=5)
             ax.legend()
 
         print("\nIniciando o loop de odometria...")
+        xy_map_corr = []
         resultados_list = []
         if self.config['display'].get('print_console', True):
             print("IMG\tKPT1\tKPT2\tMATCHES\tINLIERS\t\tDIST_REAL\tDIST_EST\tERRO_ACUM(m)\tTEMPO(s)\tMAP_OK")
@@ -840,6 +877,7 @@ class OdometriaVisual:
             # 6. Correção por map matching (opcional)
             n_inliers_map = 0
             map_ok = False
+            lat_antes_corr, lon_antes_corr = est_lat, est_lon
             if self.use_map_matching and (i % self.map_match_interval == 0):
                 (est_lat, est_lon,
                  yaw_acumulado_est,
@@ -848,6 +886,14 @@ class OdometriaVisual:
                  map_ok) = self._corrigir_posicao_pelo_mapa(
                     curr_img, est_lat, est_lon, yaw_acumulado_est, i
                 )
+
+            if map_ok:
+                if self.config['display'].get('show_map_matching', True):
+                    self._visualizar_map_matching(
+                        i, lat_antes_corr, lon_antes_corr, est_lat, est_lon
+                    )
+                x_mc, y_mc = self._latlon_to_xy(est_lat, est_lon)
+                xy_map_corr.append((x_mc, y_mc))
 
             lat_est_list.append(est_lat)
             lon_est_list.append(est_lon)
@@ -884,6 +930,9 @@ class OdometriaVisual:
             if show_plot:
                 line_est.set_data(x_est_list, y_est_list)
                 line_real.set_data(x_real_list, y_real_list)
+                if xy_map_corr:
+                    xs, ys = zip(*xy_map_corr)
+                    line_map.set_data(xs, ys)
                 ax.relim()
                 ax.autoscale_view()
                 plt.draw()
@@ -897,7 +946,8 @@ class OdometriaVisual:
         # --- Finalização ---
         Resultados = DataFrame(resultados_list) if resultados_list else DataFrame()
 
-        if self.config['display']['show_images']:
+        if (self.config['display']['show_images'] or
+                self.config['display'].get('show_map_matching', False)):
             cv.destroyAllWindows()
         if show_plot:
             plt.ioff()
