@@ -115,6 +115,12 @@ def montar_config(cfg: dict) -> dict:
         "use_map_matching":   mm.get("enabled", False),
         "map_match_interval": mm.get("interval", 1),
         "roi_size_m":         mm.get("roi_size_m", 1000),
+        "absolute_detector_type": mm.get("absolute_detector", cfg["detector"]),
+        "scale_search_step":      mm.get("scale_search_step", 0.05),
+        "map_matching_params":    {
+            k: mm[k] for k in ("inlier_thr_position", "inlier_thr_angle_scale")
+            if k in mm
+        },
     }
 
 
@@ -148,6 +154,16 @@ def parse_args() -> argparse.Namespace:
             "Sobrescreve o campo 'device' do config.yaml."
         ),
     )
+    parser.add_argument(
+        "--abs-detector",
+        choices=["ORB", "AKAZE", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
+        dest="abs_detector",
+        help=(
+            "Sobrescreve o detector do módulo de localização absoluta "
+            "(map_matching.absolute_detector).\n"
+            "Só tem efeito quando map_matching.enabled: true."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -172,6 +188,12 @@ def main():
     if args.device:
         cfg["device"] = args.device
         print(f"[INFO] Device sobrescrito via argumento: {args.device}")
+
+    if args.abs_detector:
+        if "map_matching" not in cfg:
+            cfg["map_matching"] = {}
+        cfg["map_matching"]["absolute_detector"] = args.abs_detector
+        print(f"[INFO] Detector de localização abs. sobrescrito: {args.abs_detector}")
 
     config = montar_config(cfg)
 

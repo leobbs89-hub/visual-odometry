@@ -75,8 +75,22 @@ matcher:
 # --- Map Matching ---
 map_matching:
   enabled:   false
+
+  # Detector do módulo de localização absoluta (independente da odometria)
+  # Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
+  # Recomendação da dissertação: LOFTR ou MATCHFORMER
+  absolute_detector: LOFTR
+
   interval:  1       # a cada quantos frames executar
   roi_size_m: 1000   # tamanho da região de busca no mapa (metros)
+
+  # Fator de variação na busca gulosa de escala (±5% por padrão)
+  scale_search_step: 0.05
+
+  # Limiares mínimos de inliers (Tabela 3.1 da dissertação)
+  # Se comentados, usa os valores padrão por descritor definidos no código
+  # inlier_thr_position:    20
+  # inlier_thr_angle_scale: 40
 
 # --- Visualização e Logs ---
 display:
