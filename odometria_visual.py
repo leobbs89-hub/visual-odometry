@@ -246,6 +246,15 @@ class OdometriaVisual:
         map_path = self.config['paths']['map_tif_path']
         print(f"Carregando mapa base para Map Matching: {map_path}")
         self.map_dataset = rasterio.open(map_path)
+        map_crs = self.map_dataset.crs
+        if map_crs and not map_crs.is_geographic:
+            self._map_transformer = Transformer.from_crs(
+                "EPSG:4326", map_crs, always_xy=True
+            )
+            print(f"[MAP] CRS do GeoTIFF: {map_crs.to_string()} (projetado — reproj ativado)")
+        else:
+            self._map_transformer = None
+            print(f"[MAP] CRS do GeoTIFF: {map_crs} (geográfico — sem reproj)")
 
     def _instanciar_detector(self, tipo, papel):
         """
@@ -391,7 +400,12 @@ class OdometriaVisual:
 
     def _inicializar_escala(self, altura_inicial):
         """Estima escala inicial entre imagem aérea e mapa satelital."""
-        res_mapa_m = abs(self.map_dataset.transform.a)
+        pixel_size = abs(self.map_dataset.transform.a)
+        if self.map_dataset.crs and self.map_dataset.crs.is_geographic:
+            # transform.a está em graus — converte para metros (aprox.)
+            res_mapa_m = pixel_size * np.radians(1) * 6_371_000
+        else:
+            res_mapa_m = pixel_size
         gsd_voo = altura_inicial / self.fx
         self.escala_atual = max(gsd_voo / res_mapa_m, 0.01)
         self._escala_inicializada = True
@@ -414,12 +428,21 @@ class OdometriaVisual:
         maxx = p_max_lon.longitude
         maxy = p_max_lat.latitude
 
+        if self._map_transformer is not None:
+            minx, miny = self._map_transformer.transform(minx, miny)
+            maxx, maxy = self._map_transformer.transform(maxx, maxy)
+
         window = from_bounds(minx, miny, maxx, maxy, self.map_dataset.transform)
         patch = self.map_dataset.read(1, window=window)
         patch_transform = self.map_dataset.window_transform(window)
 
+        if patch.size == 0:
+            return np.zeros((1, 1), dtype=np.uint8), patch_transform
+
         patch_8u = cv.normalize(patch, None, alpha=0, beta=255,
                                 norm_type=cv.NORM_MINMAX, dtype=cv.CV_8U)
+        if patch_8u is None:
+            patch_8u = np.zeros_like(patch, dtype=np.uint8)
         return patch_8u, patch_transform
 
     def _preparar_patch_satelital(self, lat, lon, angulo_graus, escala):
@@ -870,7 +893,7 @@ class OdometriaVisual:
 
             # 5. Nova posição estimada
             est_lat, est_lon = self.estima_latlon(
-                lat_est_list[i], lon_est_list[i],
+                lat_est_list[-1], lon_est_list[-1],
                 yaw_acumulado_est, dist_est_atual
             )
 
