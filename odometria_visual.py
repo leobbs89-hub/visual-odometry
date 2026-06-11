@@ -543,6 +543,10 @@ class OdometriaVisual:
         """Executa o pipeline completo de odometria visual."""
         self._carregar_dados()
 
+        # --- [INSERÇÃO SVM]: Inicialização do Classificador ---
+        from classificador_svm import ClassificadorParametrosSVM
+        svm_classificador = ClassificadorParametrosSVM()
+
         # --- Inicialização ---
         lat_est_list = [self.lat_real_list[0]]
         lon_est_list = [self.lon_real_list[0]]
@@ -581,6 +585,19 @@ class OdometriaVisual:
 
             prev_img = self.imgs_list[i]
             curr_img = self.imgs_list[i + 1]
+            # --- [INSERÇÃO SVM]: Adaptação Dinâmica Quadro a Quadro ---
+            # O SVM avalia o frame atual apenas se for AKAZE ou ORB para evitar interferir nas CNNs
+            if self.detector_type in ('AKAZE', 'ORB'):
+                classe_cenario = svm_classificador.predizer_classe_cenario(curr_img)
+                params_otimizados = svm_classificador.obter_parametros_otimizados(classe_cenario)
+                self._atualizar_detector_via_svm(params_otimizados)
+                
+                # Validação via terminal
+                param_ativo = params_otimizados['threshold'] if self.detector_type == 'AKAZE' else params_otimizados['nfeatures']
+                print(f"[SVM INFO] Frame {i+1:04d} -> Classe Predita: {classe_cenario} | Parâmetro Injetado ({self.detector_type}): {param_ativo}")
+                
+                # Se prev_features existir, invalida para forçar o recálculo com o novo threshold
+                prev_features = None
 
             # 1. Correspondências
             pts1, pts2, kpt1, kpt2, n_matches, curr_features = self._obter_correspondencias(
