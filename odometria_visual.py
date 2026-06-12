@@ -699,7 +699,9 @@ class OdometriaVisual:
                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
         cv.imshow("Map Matching — Debug", vis)
-        cv.waitKey(1)
+        print(f"[DEBUG] Frame {i} | Inliers: {n_inliers} | {status}"
+              " | Pressione qualquer tecla na janela para continuar...")
+        cv.waitKey(0)
 
     # ------------------------------------------------------------------
     # Correspondências de features
@@ -959,8 +961,9 @@ class OdometriaVisual:
             if debug_mm:
                 if ran_map_matching:
                     self._exibir_debug_patch(i, n_inliers_map, map_ok)
-                input(f"[DEBUG] Frame {i} | MAP_OK={map_ok} | Inliers={n_inliers_map}"
-                      " | Pressione ENTER para continuar...")
+                else:
+                    input(f"[DEBUG] Frame {i} (map matching não executado neste intervalo)"
+                          " | Pressione ENTER para continuar...")
 
             lat_est_list.append(est_lat)
             lon_est_list.append(est_lon)
