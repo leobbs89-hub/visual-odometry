@@ -609,6 +609,9 @@ class OdometriaVisual:
             img_aerea, lat_est, lon_est, yaw_acumulado, self.escala_atual
         )
 
+        # Armazena sempre para debug, independente do resultado
+        self._last_debug_data = (img_aerea, patch_otimo)
+
         if n_inliers < self.inlier_thr_position:
             return lat_est, lon_est, yaw_acumulado, self.escala_atual, n_inliers, False
 
@@ -663,6 +666,39 @@ class OdometriaVisual:
                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
         cv.imshow("Map Matching — Correspondencias", img_vis)
+        cv.waitKey(1)
+
+    def _exibir_debug_patch(self, i, n_inliers, map_ok):
+        """Janela de debug: imagem aérea e patch satelital lado a lado, sempre."""
+        if not hasattr(self, '_last_debug_data'):
+            return
+
+        img_aerea, patch = self._last_debug_data
+
+        def para_bgr(img, h_alvo):
+            out = cv.cvtColor(img, cv.COLOR_GRAY2BGR) if img.ndim == 2 else img.copy()
+            if out.shape[0] != h_alvo:
+                s = h_alvo / out.shape[0]
+                out = cv.resize(out, (max(1, int(out.shape[1] * s)), h_alvo))
+            return out
+
+        h_ref = max(img_aerea.shape[0], patch.shape[0])
+        img_a = para_bgr(img_aerea, h_ref)
+        img_p = para_bgr(patch, h_ref)
+        sep   = np.full((h_ref, 4, 3), 128, dtype=np.uint8)
+        vis   = np.hstack([img_a, sep, img_p])
+
+        status = "MAP OK" if map_ok else "SEM CORRESPONDENCIA"
+        cor    = (0, 200, 0) if map_ok else (0, 0, 220)
+        cv.putText(vis, f"Frame {i} | Inliers: {n_inliers} | {status}",
+                   (10, 22), cv.FONT_HERSHEY_SIMPLEX, 0.65, cor, 2)
+        cv.putText(vis, "Imagem Aerea",
+                   (10, h_ref - 8), cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        cv.putText(vis, "Patch Satelital (recortado + rotac.)",
+                   (img_a.shape[1] + 14, h_ref - 8),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+        cv.imshow("Map Matching — Debug", vis)
         cv.waitKey(1)
 
     # ------------------------------------------------------------------
@@ -834,6 +870,7 @@ class OdometriaVisual:
 
         # --- Plotagem em tempo real ---
         show_plot = self.config['display']['show_plot']
+        debug_mm  = self.config['display'].get('debug_map_matching', False)
         if show_plot:
             plt.ion()
             fig, ax = plt.subplots()
@@ -901,7 +938,8 @@ class OdometriaVisual:
             n_inliers_map = 0
             map_ok = False
             lat_antes_corr, lon_antes_corr = est_lat, est_lon
-            if self.use_map_matching and (i % self.map_match_interval == 0):
+            ran_map_matching = self.use_map_matching and (i % self.map_match_interval == 0)
+            if ran_map_matching:
                 (est_lat, est_lon,
                  yaw_acumulado_est,
                  self.escala_atual,
@@ -917,6 +955,12 @@ class OdometriaVisual:
                     )
                 x_mc, y_mc = self._latlon_to_xy(est_lat, est_lon)
                 xy_map_corr.append((x_mc, y_mc))
+
+            if debug_mm:
+                if ran_map_matching:
+                    self._exibir_debug_patch(i, n_inliers_map, map_ok)
+                input(f"[DEBUG] Frame {i} | MAP_OK={map_ok} | Inliers={n_inliers_map}"
+                      " | Pressione ENTER para continuar...")
 
             lat_est_list.append(est_lat)
             lon_est_list.append(est_lon)
@@ -970,7 +1014,8 @@ class OdometriaVisual:
         Resultados = DataFrame(resultados_list) if resultados_list else DataFrame()
 
         if (self.config['display']['show_images'] or
-                self.config['display'].get('show_map_matching', False)):
+                self.config['display'].get('show_map_matching', False) or
+                debug_mm):
             cv.destroyAllWindows()
         if show_plot:
             plt.ioff()

@@ -98,3 +98,4 @@ display:
   show_images:        false   # janela com correspondências entre frames
   print_console:      true    # imprime os resultados frame a frame no console
   show_map_matching:  true    # janela OpenCV com correspondências do map matching
+  debug_map_matching: false   # pausa em cada frame e exibe imagens do map matching
