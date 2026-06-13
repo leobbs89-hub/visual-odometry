@@ -23,3 +23,7 @@ torchvision>=0.16
 
 # Feature matching neural — LoFTR
 kornia>=0.7
+
+# MatchFormer — dependências não listadas no requirements.txt original do repo
+timm
+einops

@@ -69,8 +69,8 @@ if "%USE_NEURAL%"=="true" (
         )
     )
 
-    echo [INFO] Instalando kornia e outras dependencias neurais ...
-    pip install "kornia>=0.7"
+    echo [INFO] Instalando kornia, timm e outras dependencias neurais ...
+    pip install "kornia>=0.7" timm einops -q
 
     echo.
     echo [INFO] Baixando checkpoint LoFTR ^(loftr_outdoor.ckpt^) ...
