@@ -7,7 +7,7 @@ necessários para estimar a trajetória de uma câmera a partir de uma sequênci
 de imagens, comparando-a com dados de GPS.
 
 Módulos complementares:
-    map_matching_mixin.py — Localização Absoluta via correspondência com mapa satelital
+    map_matching.py — Localização Absoluta via correspondência com mapa satelital
     utils.py              — Funções utilitárias puras (KML, etc.)
 """
 
@@ -22,7 +22,7 @@ from pandas import read_csv, DataFrame
 from pyproj import Geod, Transformer
 
 from utils import criar_caminho_kml
-from map_matching_mixin import MapMatchingMixin, _INLIER_THRESHOLDS, _DEFAULT_INLIER_THRESHOLDS
+from map_matching import MapMatchingMixin, _INLIER_THRESHOLDS, _DEFAULT_INLIER_THRESHOLDS
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# map_matching_mixin.py
+# map_matching.py
 """
 Mixin com todo o módulo de Localização Absoluta (map matching) baseado na
 dissertação de Bruno Dantas (ITA 2023, Seção 3.2.3).
@@ -212,10 +212,10 @@ class MapMatchingMixin:
         return patch_final, T_final, M_rot_inv, shape_antes_rot
 
     # ------------------------------------------------------------------
-    # Busca gulosa de escala
+    # Busca de escala
     # ------------------------------------------------------------------
 
-    def _busca_escala_gulosa(self, img_aerea, lat, lon, angulo_graus,
+    def _busca_escala(self, img_aerea, lat, lon, angulo_graus,
                               escala_anterior):
         """
         Testa 3 escalas candidatas e retorna a que produz mais inliers
@@ -315,7 +315,7 @@ class MapMatchingMixin:
 
         (patch_otimo, escala_otima, pts1, pts2,
          n_inliers, patch_transform, M_rot_inv,
-         shape_orig) = self._busca_escala_gulosa(
+         shape_orig) = self._busca_escala(
             img_aerea, lat_est, lon_est, yaw_acumulado, self.escala_atual
         )
 
