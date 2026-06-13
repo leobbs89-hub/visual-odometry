@@ -61,12 +61,22 @@ detector_params:
 
   matchformer:
     backbone_type: largesea   # litela | largela | litesea | largesea
+    resolution: [8, 2]
+    fine_window_size: 5
+    fine_concat_coarse_feat: true
+    coarse:
+      d_model: 256
+      d_ffn:   256
+    fine:
+      d_model: 128
+      d_ffn:   128
     match_coarse:
       thr:                    0.2
-      border_rm:              2
+      border_rm:              0
+      match_type:             dual_softmax
+      dsmax_temperature:      0.1
       train_coarse_percent:   0.2
-      train_pad_num_gt_min:   100
-    match_type: dual_softmax  # dsmax_tempeture | dual_softmax
+      train_pad_num_gt_min:   200
 
 # --- Correspondências (ORB / AKAZE) ---
 matcher:

@@ -224,7 +224,7 @@ class OdometriaVisual(MapMatchingMixin):
                     "Funciona em CPU — GPU não é obrigatória."
                 )
             params = self.config['detector_params'].get('matchformer', {})
-            mat = Matchformer(**params).eval().to(self.device)
+            mat = Matchformer(params).eval().to(self.device)
             print(f"  MatchFormer [{papel}] pronto em [{self.device}]")
             return None, mat
 
