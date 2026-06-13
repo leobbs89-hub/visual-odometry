@@ -357,15 +357,24 @@ class OdometriaVisual(MapMatchingMixin):
             pts2 = kp2[matches[:, 1]].cpu().numpy()
             return pts1, pts2, len(kp1), len(kp2), len(matches), None
 
-        elif det_type in ('LOFTR', 'MATCHFORMER'):
+        elif det_type == 'LOFTR':
             t1 = self._img_to_tensor(img1)
             t2 = self._img_to_tensor(img2)
-
             with torch.inference_mode():
                 corr = mat({'image0': t1, 'image1': t2})
-
             pts1 = corr['keypoints0'].cpu().numpy()
             pts2 = corr['keypoints1'].cpu().numpy()
+            n = len(pts1)
+            return pts1, pts2, n, n, n, None
+
+        elif det_type == 'MATCHFORMER':
+            t1 = self._img_to_tensor(img1)
+            t2 = self._img_to_tensor(img2)
+            data = {'image0': t1, 'image1': t2}
+            with torch.inference_mode():
+                mat(data)  # modifica data in-place, não retorna nada
+            pts1 = data['mkpts0_f'].cpu().numpy()
+            pts2 = data['mkpts1_f'].cpu().numpy()
             n = len(pts1)
             return pts1, pts2, n, n, n, None
 

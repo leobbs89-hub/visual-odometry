@@ -284,9 +284,24 @@ class MapMatchingMixin:
         centro = np.array([[[w / 2.0, h / 2.0]]], dtype=np.float32)
         ponto_no_patch = cv.perspectiveTransform(centro, H)[0][0]
 
+        if not (np.isfinite(ponto_no_patch[0]) and np.isfinite(ponto_no_patch[1])):
+            return None
+
         lon_corr, lat_corr = patch_transform * (
             float(ponto_no_patch[0]), float(ponto_no_patch[1])
         )
+
+        # Se o mapa está em CRS projetado, converter de volta para WGS84
+        if self._map_transformer is not None:
+            lon_corr, lat_corr = self._map_transformer.transform(
+                lon_corr, lat_corr, direction='INVERSE'
+            )
+
+        if not (np.isfinite(lat_corr) and np.isfinite(lon_corr)):
+            return None
+        if not (-90.0 <= lat_corr <= 90.0 and -180.0 <= lon_corr <= 180.0):
+            return None
+
         return lat_corr, lon_corr
 
     def _extrair_angulo_da_homografia(self, H):
