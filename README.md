@@ -42,21 +42,32 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ### Linux / macOS
 
 ```bash
-# Apenas ORB e AKAZE
+# 1. Clonar o repositório
+git clone https://github.com/leobbs89-hub/visual-odometry.git
+cd visual-odometry
+
+# 2. Instalar — apenas ORB e AKAZE
 bash install.sh
 
-# Com detectores neurais (CPU ou GPU automático)
+# 2. Ou com detectores neurais (CPU ou GPU automático)
 bash install.sh --neural
 ```
 
 ### Windows
 
 ```bat
+REM 1. Clonar o repositório
+git clone https://github.com/leobbs89-hub/visual-odometry.git
+cd visual-odometry
+
+REM 2. Instalar — apenas ORB e AKAZE
 install.bat
+
+REM 2. Ou com detectores neurais
 install.bat --neural
 ```
 
-O script cria automaticamente um `.venv`, instala as dependências e clona os repositórios necessários do GitHub.
+O script cria automaticamente um `.venv`, instala as dependências e clona os repositórios necessários do GitHub (LightGlue e MatchFormer).
 
 ### Instalação manual
 
