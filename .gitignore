@@ -52,7 +52,13 @@ desktop.ini
 
 # Logs
 *.log
-"CLAUDE.md" 
+
+# Dependências externas clonadas pelo install.bat
+LightGlue/
+MatchFormer/
+
+# Contexto local do Claude Code
+CLAUDE.md
 
 # Configurações e testes locais
 config_pessoal.yaml
