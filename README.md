@@ -28,6 +28,9 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ```
 ├── main.py                  # Ponto de entrada + parsing do config.yaml
 ├── odometria_visual.py      # Classe OdometriaVisual — todo o pipeline
+├── map_matching.py          # MapMatchingMixin — localização absoluta via GeoTIFF
+├── utils.py                 # Funções puras: KML, geração de rota
+├── criar_rota_quadrado.py   # Geração de rota quadrada simulada + CSV/KML
 ├── config.yaml              # Parâmetros editáveis (caminhos, câmera, detector)
 ├── requirements.txt         # Dependências base (ORB e AKAZE)
 ├── requirements-neural.txt  # Dependências extras para redes neurais
@@ -146,6 +149,41 @@ Salvas em `paths.output`:
 
 ---
 
+## Geração de rota simulada
+
+O script `criar_rota_quadrado.py` gera uma sequência de imagens sintética para testes,
+sem necessidade de voo real.
+
+```powershell
+.venv\Scripts\activate.bat
+python criar_rota_quadrado.py
+```
+
+Saídas geradas em `OUTPUT_DIR` (configurável no topo do script):
+
+| Arquivo | Conteúdo |
+|---|---|
+| `Coord-Heading-Elev_<ALT>_<MACH>.csv` | Ground truth simulado (Lat, Long, Proa, Altura) |
+| `KML_tour_<ALT>_<MACH>.kml` | Tour animado para Google Earth (`gx:Tour`) |
+| `KML_path_<ALT>_<MACH>.kml` | Pontos da rota como Placemarks |
+| `Resized/` | Imagens cortadas para a largura do sensor (`SENSOR_PX`) |
+
+Parâmetros principais no topo do arquivo:
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `ALTITUDE` | Altitude AGL em metros | 1500 |
+| `MACH` | Número de Mach | 2.0 |
+| `FPS` | Amostras por segundo no CSV | 1 |
+| `SQUARE_SIDE_KM` | Lado do quadrado em km | 10 |
+| `SQUARE_INITIAL_HEADING` | Proa inicial em graus (0=Norte) | 0 |
+| `SQUARE_TURN_DIRECTION` | +1 = curvas à direita, -1 = esquerda | 1 |
+
+A velocidade do som é calculada automaticamente pela biblioteca `ambiance` (modelo ICAO)
+para a altitude configurada.
+
+---
+
 ## Dependências
 
 ### `requirements.txt`
@@ -161,6 +199,8 @@ Salvas em `paths.output`:
 | `geopy` | Distâncias geodésicas |
 | `rasterio` | Leitura lazy de GeoTIFF |
 | `pyyaml` | Leitura do `config.yaml` |
+| `ambiance` | Modelo de atmosfera ICAO (velocidade do som por altitude) |
+| `requests` | Consulta à API Open-Elevation para elevação do terreno |
 
 ### `requirements-neural.txt`
 
