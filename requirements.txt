@@ -27,3 +27,7 @@ rasterio>=1.3
 
 # Leitura de arquivos de configuração YAML
 pyyaml>=6.0
+
+# Geração de rota simulada (criar_rota_quadrado.py)
+ambiance>=1.2          # modelo de atmosfera padrão ICAO (velocidade do som)
+requests>=2.31         # consulta API de elevação do terreno
