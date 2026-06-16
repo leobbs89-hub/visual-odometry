@@ -8,13 +8,12 @@ interpoladas, KML Tour e KML de pontos para visualização no Google Earth.
 import os
 import math
 import numpy as np
-import pandas as pd
 import requests
 import cv2
 from pyproj import Geod
 from ambiance import Atmosphere
 
-from utils import gerar_tour_kml, gerar_pontos_kml
+from utils import gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints
 
 # ==========================================
 # CONFIGURAÇÕES GERAIS
@@ -141,83 +140,6 @@ def generate_square_route(start_lon, start_lat, initial_heading, side_km,
 # INTERPOLAÇÃO → CSV
 # ==========================================
 
-def interpolate_to_dataframe(waypoints, speed_ms, fps=FPS, altitude=ALTITUDE):
-    """
-    Interpola os waypoints em amostras regulares de 1/fps segundos.
-
-    Retorna DataFrame com colunas: File, Lat, Long, Proa, Altura.
-    """
-    g    = Geod(ellps='clrk66')
-    step = 1.0 / fps
-
-    total_time = sum(wp["duration"] for wp in waypoints)
-    timestamps = np.arange(0.0, total_time + step, step)
-    n          = len(timestamps)
-
-    file_list = [f"-{i:06d}.png" for i in range(1, n + 1)]
-
-    cum_times = np.cumsum([wp["duration"] for wp in waypoints])
-
-    lats, lons, proas = [], [], []
-    seg = 0
-
-    for t in timestamps:
-        while seg < len(waypoints) - 2 and t > cum_times[seg + 1]:
-            seg += 1
-
-        wp0 = waypoints[seg]
-        wp1 = waypoints[seg + 1]
-
-        seg_dur = wp1["duration"]
-        frac = (t - cum_times[seg]) / seg_dur if seg_dur > 0 else 1.0
-        frac = min(max(frac, 0.0), 1.0)
-
-        if frac <= 0.0:
-            lons.append(wp0["longitude"])
-            lats.append(wp0["latitude"])
-            proas.append(wp0["heading"])
-        elif frac >= 1.0:
-            lons.append(wp1["longitude"])
-            lats.append(wp1["latitude"])
-            proas.append(wp1["heading"])
-        else:
-            dist = frac * speed_ms * seg_dur
-            az   = wp0["heading"] - 360.0 * (wp0["heading"] > 180.0)
-            elo, ela, _ = g.fwd(wp0["longitude"], wp0["latitude"], az, dist)
-            dh = wp1["heading"] - wp0["heading"]
-            if dh >  180: dh -= 360
-            if dh < -180: dh += 360
-            lons.append(elo)
-            lats.append(ela)
-            proas.append((wp0["heading"] + frac * dh) % 360)
-
-    df = pd.DataFrame({
-        "File":        file_list[:n],
-        "Lat":         lats,
-        "Long":        lons,
-        "Proa":        proas,
-        "Altura":      float(altitude),
-        "duration":    0.0,
-        "heading":     proas,
-        "altitude":    float(altitude),
-        "tilt":        0,
-        "flight_mode": "bounce",
-    })
-
-    for i in range(1, len(df)):
-        az_fwd, _, dist = g.inv(
-            df.iloc[i-1]["Long"], df.iloc[i-1]["Lat"],
-            df.iloc[i]["Long"],   df.iloc[i]["Lat"],
-        )
-        az_fwd += (az_fwd < 0) * 360
-        df.loc[i, "duration"]    = dist / speed_ms
-        df.loc[i, "heading"]     = az_fwd
-        df.loc[i, "flight_mode"] = "smooth"
-
-    df["proa"] = df["heading"]
-    return df
-
-
 # ==========================================
 # ELEVAÇÃO DO TERRENO (API)
 # ==========================================
@@ -320,7 +242,7 @@ if __name__ == "__main__":
 
     # 2. Interpolação → DataFrame
     print("Interpolando coordenadas...")
-    df = interpolate_to_dataframe(waypoints, speed_ms, fps=FPS, altitude=ALTITUDE)
+    df = interpolar_waypoints(waypoints, speed_ms, fps=FPS, altitude=ALTITUDE)
     print(f"  Amostras  : {len(df)}")
 
     # 3. Elevação do terreno
