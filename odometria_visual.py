@@ -510,7 +510,10 @@ class OdometriaVisual(MapMatchingMixin):
             # 4. Yaw acumulado
             euler     = Rotation.from_matrix(R).as_euler('zyx', degrees=True)
             yaw_delta = euler[0]
-            if i <= 2 and abs(yaw_delta) > 45:
+            inlier_ratio = n_inliers / n_matches if n_matches > 0 else 0
+            # Ignora rotação se: ângulo absurdo nos primeiros frames,
+            # OU taxa de inliers baixa (Essential Matrix não confiável)
+            if (i <= 2 and abs(yaw_delta) > 45) or inlier_ratio < 0.30:
                 yaw_delta = 0.0
             yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
 
