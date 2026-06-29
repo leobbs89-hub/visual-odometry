@@ -169,19 +169,55 @@ def interpolar_waypoints(waypoints, speed_ms, fps=1, altitude=1500):
     return df
 
 
-def criar_caminho_kml(lat_list, lon_list, file_path):
+# Paleta de cores por velocidade Mach (formato KML: AABBGGRR)
+# Gradiente frio → quente: Azul → Ciano → Verde → Verde-amarelo → Amarelo → Laranja → Vermelho
+_MACH_KML_COLORS = {
+    0.5: "ffff0000",   # Azul
+    0.8: "ffffff00",   # Ciano
+    1.0: "ff00ff00",   # Verde
+    1.2: "ff00ff80",   # Verde-amarelo
+    1.5: "ff00ffff",   # Amarelo
+    1.8: "ff0080ff",   # Laranja
+    2.0: "ff0000ff",   # Vermelho
+}
+_KML_COLOR_REAL      = "ff000000"   # Preto — trajetória real (GPS)
+_KML_COLOR_DEFAULT   = "ff00ffff"   # Amarelo — fallback se mach desconhecido
+
+
+def mach_to_kml_color(mach):
+    """Retorna a cor KML (AABBGGRR) correspondente à velocidade Mach.
+
+    Faz busca pela chave mais próxima para tolerar imprecisão de float.
+    """
+    if mach is None:
+        return _KML_COLOR_DEFAULT
+    closest = min(_MACH_KML_COLORS.keys(), key=lambda k: abs(k - mach))
+    return _MACH_KML_COLORS[closest]
+
+
+def criar_caminho_kml(lat_list, lon_list, file_path, color=None):
     """
     Cria um arquivo KML a partir de listas de coordenadas para visualização
     no Google Earth.
+
+    Args:
+        lat_list: lista de latitudes.
+        lon_list: lista de longitudes.
+        file_path: caminho de saída do arquivo .kml.
+        color: cor da linha no formato KML AABBGGRR (str).
+               Se None, usa o fallback amarelo.
     """
+    if color is None:
+        color = _KML_COLOR_DEFAULT
+
     kml_template = '''<?xml version="1.0" encoding="UTF-8"?>
     <kml xmlns="http://www.opengis.net/kml/2.2">
     <Document>
         <name>{route_name}</name>
-        <Style id="yellowLine"><LineStyle><color>7f00ffff</color><width>4</width></LineStyle></Style>
+        <Style id="trajLine"><LineStyle><color>{color}</color><width>4</width></LineStyle></Style>
         <Placemark>
             <name>Trajetoria</name>
-            <styleUrl>#yellowLine</styleUrl>
+            <styleUrl>#trajLine</styleUrl>
             <LineString><tessellate>1</tessellate><coordinates>{point_elements}</coordinates></LineString>
         </Placemark>
     </Document>
@@ -192,6 +228,7 @@ def criar_caminho_kml(lat_list, lon_list, file_path):
     )
     xml_content = kml_template.format(
         route_name=os.path.basename(file_path),
+        color=color,
         point_elements=point_elements.strip()
     )
 

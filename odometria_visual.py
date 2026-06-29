@@ -21,7 +21,7 @@ from scipy.spatial.transform import Rotation
 from pandas import read_csv, DataFrame
 from pyproj import Geod, Transformer
 
-from utils import criar_caminho_kml
+from utils import criar_caminho_kml, mach_to_kml_color, _KML_COLOR_REAL
 from map_matching import MapMatchingMixin, _INLIER_THRESHOLDS, _DEFAULT_INLIER_THRESHOLDS
 
 
@@ -614,13 +614,16 @@ class OdometriaVisual(MapMatchingMixin):
             os.path.join(output_dir, f'resultados_{self.detector_type}.csv'),
             index=False
         )
+        mach = self.config.get('mach')
         criar_caminho_kml(
             self.lat_real_list, self.lon_real_list,
-            os.path.join(output_dir, 'trajetoria_real.kml')
+            os.path.join(output_dir, 'trajetoria_real.kml'),
+            color=_KML_COLOR_REAL
         )
         criar_caminho_kml(
             lat_est_list, lon_est_list,
-            os.path.join(output_dir, f'trajetoria_estimada_{self.detector_type}.kml')
+            os.path.join(output_dir, f'trajetoria_estimada_{self.detector_type}.kml'),
+            color=mach_to_kml_color(mach)
         )
         print("\nProcesso de odometria finalizado.")
 
