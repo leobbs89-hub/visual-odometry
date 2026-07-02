@@ -11,9 +11,12 @@ numérico, apenas reorganizando em um objeto por detector.
 
 import sys
 import os
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +93,7 @@ class OrbDetector(FeatureDetector):
         self.det = cv.ORB_create(**params)
         self.mat = cv.DescriptorMatcher_create(cv.DescriptorMatcher_BRUTEFORCE_HAMMING)
         self.nn_match_ratio = matcher_params['nn_match_ratio']
-        print(f"  ORB [{papel}] pronto")
+        logger.info("ORB [%s] pronto", papel)
 
     def match(self, img1, img2, prev_state=None):
         kp1, des1 = prev_state if prev_state is not None else self.det.detectAndCompute(img1, None)
@@ -120,7 +123,7 @@ class AkazeDetector(FeatureDetector):
         self.det = cv.AKAZE_create(**params)
         self.mat = cv.DescriptorMatcher_create(cv.DescriptorMatcher_BRUTEFORCE_HAMMING)
         self.nn_match_ratio = matcher_params['nn_match_ratio']
-        print(f"  AKAZE [{papel}] pronto")
+        logger.info("AKAZE [%s] pronto", papel)
 
     def match(self, img1, img2, prev_state=None):
         kp1, des1 = prev_state if prev_state is not None else self.det.detectAndCompute(img1, None)
@@ -157,7 +160,7 @@ class SuperPointDetector(FeatureDetector):
         self.device = device
         self.det = SuperPoint(**params).eval().to(device)
         self.mat = LightGlue(features='superpoint').eval().to(device)
-        print(f"  SuperPoint + LightGlue [{papel}] prontos em [{device}]")
+        logger.info("SuperPoint + LightGlue [%s] prontos em [%s]", papel, device)
 
     def match(self, img1, img2, prev_state=None):
         t1 = _img_to_tensor(img1, self.device)
@@ -185,7 +188,7 @@ class LoftrDetector(FeatureDetector):
             )
         self.device = device
         self.mat = LoFTR(**params).eval().to(device)
-        print(f"  LoFTR [{papel}] pronto em [{device}]")
+        logger.info("LoFTR [%s] pronto em [%s]", papel, device)
 
     def match(self, img1, img2, prev_state=None):
         t1 = _img_to_tensor(img1, self.device)
@@ -211,7 +214,7 @@ class MatchFormerDetector(FeatureDetector):
             )
         self.device = device
         self.mat = Matchformer(params).eval().to(device)
-        print(f"  MatchFormer [{papel}] pronto em [{device}]")
+        logger.info("MatchFormer [%s] pronto em [%s]", papel, device)
 
     def match(self, img1, img2, prev_state=None):
         t1 = _img_to_tensor(img1, self.device)
@@ -249,7 +252,7 @@ def criar_detector(tipo, detector_params, matcher_params, device, papel='odometr
     Returns:
         FeatureDetector
     """
-    print(f"Inicializando detector [{papel}]: {tipo}")
+    logger.info("Inicializando detector [%s]: %s", papel, tipo)
 
     cls = _REGISTRY.get(tipo)
     if cls is None:

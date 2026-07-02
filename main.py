@@ -13,10 +13,13 @@ Uso:
 
 import sys
 import argparse
+import logging
 import numpy as np
 import cv2 as cv
 import yaml
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +179,7 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     args = parse_args()
 
     config_path = Path(args.config)
@@ -187,17 +191,17 @@ def main():
     # Sobrescreve campos via linha de comando, se fornecidos
     if args.detector:
         cfg["detector"] = args.detector
-        print(f"[INFO] Detector sobrescrito via argumento: {args.detector}")
+        logger.info("Detector sobrescrito via argumento: %s", args.detector)
 
     if args.device:
         cfg["device"] = args.device
-        print(f"[INFO] Device sobrescrito via argumento: {args.device}")
+        logger.info("Device sobrescrito via argumento: %s", args.device)
 
     if args.abs_detector:
         if "map_matching" not in cfg:
             cfg["map_matching"] = {}
         cfg["map_matching"]["absolute_detector"] = args.abs_detector
-        print(f"[INFO] Detector de localização abs. sobrescrito: {args.abs_detector}")
+        logger.info("Detector de localização abs. sobrescrito: %s", args.abs_detector)
 
     config = montar_config(cfg)
 

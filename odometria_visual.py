@@ -13,6 +13,7 @@ Módulos complementares:
 
 import os
 import time
+import logging
 from dataclasses import dataclass
 import numpy as np
 import cv2 as cv
@@ -27,6 +28,8 @@ from detectors import criar_detector, TORCH_AVAILABLE
 
 if TORCH_AVAILABLE:
     import torch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -145,7 +148,7 @@ class OdometriaVisual(MapMatchingMixin):
         else:  # 'auto'
             dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        print(f"[INFO] Device para redes neurais: {dev}")
+        logger.info("Device para redes neurais: %s", dev)
         return dev
 
     def _inicializar_detector_odometria(self):
@@ -177,7 +180,7 @@ class OdometriaVisual(MapMatchingMixin):
 
         if not self.imgs_list:
             raise FileNotFoundError(f"Nenhuma imagem encontrada em: {image_path}")
-        print(f"{len(self.imgs_list)} imagens carregadas.")
+        logger.info("%d imagens carregadas.", len(self.imgs_list))
 
         gt_path = self.config['paths']['ground_truth_path']
         df = read_csv(gt_path, sep=',')
@@ -188,7 +191,7 @@ class OdometriaVisual(MapMatchingMixin):
 
         # GSD — Ground Sampling Distance (m/pixel)
         self.gsd_list = (1.0 * self.height_list) / self.fx
-        print("Dados de GPS e GSD carregados.")
+        logger.info("Dados de GPS e GSD carregados.")
 
         # Projeção UTM local
         self._R_EARTH      = 6_371_000
@@ -310,7 +313,7 @@ class OdometriaVisual(MapMatchingMixin):
         debug_mm  = self.config['display'].get('debug_map_matching', False)
         plot_objs = self._setup_plot(x_est_list, y_est_list, x_real_list, y_real_list)
 
-        print("\nIniciando o loop de odometria...")
+        logger.info("Iniciando o loop de odometria...")
         xy_map_corr    = []
         resultados_list = []
         if self.config['display'].get('print_console', True):
@@ -381,14 +384,14 @@ class OdometriaVisual(MapMatchingMixin):
         )
         prev_features = curr_features
         if pts1 is None or len(pts1) < 8:
-            print(f"Frame {i}: poucas correspondências. Pulando.")
+            logger.warning("Frame %d: poucas correspondências. Pulando.", i)
             return _FrameResult(False, prev_features, yaw_acumulado_est,
                                  dist_est_total, dist_real_total)
 
         # 2. Matriz Essencial → pose
         result_pose = self._process_frame_pose(pts1, pts2)
         if result_pose[0] is None:
-            print(f"Frame {i}: poucos inliers após RANSAC. Pulando.")
+            logger.warning("Frame %d: poucos inliers após RANSAC. Pulando.", i)
             return _FrameResult(False, prev_features, yaw_acumulado_est,
                                  dist_est_total, dist_real_total)
         inl1, inl2, R, t = result_pose
@@ -538,7 +541,7 @@ class OdometriaVisual(MapMatchingMixin):
             os.path.join(output_dir, f'trajetoria_estimada_{self.detector_type}.kml'),
             color=mach_to_kml_color(mach)
         )
-        print("\nProcesso de odometria finalizado.")
+        logger.info("Processo de odometria finalizado.")
 
     def _exibir_correspondencias(self, prev_img, curr_img, inl1, inl2,
                                   max_draw=150):

@@ -7,6 +7,8 @@ A classe MapMatchingMixin é herdada por OdometriaVisual e acessa atributos
 da classe principal via self (self.config, self.map_dataset, etc.).
 """
 
+import logging
+
 import numpy as np
 import cv2 as cv
 import rasterio
@@ -14,6 +16,8 @@ from rasterio.windows import from_bounds
 from rasterio.transform import Affine
 from pyproj import Transformer
 from geopy.distance import distance
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -84,17 +88,17 @@ class MapMatchingMixin:
     def _inicializar_mapa(self):
         """Abre o arquivo GeoTIFF de forma lazy (sem carregar tudo na RAM)."""
         map_path = self.config['paths']['map_tif_path']
-        print(f"Carregando mapa base para Map Matching: {map_path}")
+        logger.info("Carregando mapa base para Map Matching: %s", map_path)
         self.map_dataset = rasterio.open(map_path)
         map_crs = self.map_dataset.crs
         if map_crs and not map_crs.is_geographic:
             self._map_transformer = Transformer.from_crs(
                 "EPSG:4326", map_crs, always_xy=True
             )
-            print(f"[MAP] CRS do GeoTIFF: {map_crs.to_string()} (projetado — reproj ativado)")
+            logger.info("CRS do GeoTIFF: %s (projetado — reproj ativado)", map_crs.to_string())
         else:
             self._map_transformer = None
-            print(f"[MAP] CRS do GeoTIFF: {map_crs} (geográfico — sem reproj)")
+            logger.info("CRS do GeoTIFF: %s (geográfico — sem reproj)", map_crs)
 
     def _inicializar_escala(self, altura_inicial):
         """Estima escala inicial entre imagem aérea e mapa satelital."""
@@ -106,8 +110,8 @@ class MapMatchingMixin:
         gsd_voo = altura_inicial / self.fx
         self.escala_atual = max(gsd_voo / res_mapa_m, 0.01)
         self._escala_inicializada = True
-        print(f"[MAP] Escala inicial: {self.escala_atual:.4f} "
-              f"(GSD={gsd_voo:.3f}m/px, res_mapa={res_mapa_m:.3f}m/px)")
+        logger.info("Escala inicial: %.4f (GSD=%.3fm/px, res_mapa=%.3fm/px)",
+                    self.escala_atual, gsd_voo, res_mapa_m)
 
     # ------------------------------------------------------------------
     # Preparação do patch satelital
@@ -428,6 +432,6 @@ class MapMatchingMixin:
                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
         cv.imshow("Map Matching — Debug", vis)
-        print(f"[DEBUG] Frame {i} | Inliers: {n_inliers} | {status}"
-              " | Pressione qualquer tecla na janela para continuar...")
+        logger.info("Frame %d | Inliers: %d | %s | Pressione qualquer tecla na janela para continuar...",
+                    i, n_inliers, status)
         cv.waitKey(0)
