@@ -94,6 +94,11 @@ class OdometriaVisual(MapMatchingMixin):
 
         self.geod = Geod(ellps='WGS84')
 
+        # --- Filtro de yaw (ver executar(), passo 4) ---
+        self._yaw_max_initial_frames  = config.get('yaw_filter_max_initial_frames', 2)
+        self._yaw_max_initial_deg     = config.get('yaw_filter_max_initial_yaw_deg', 45)
+        self._yaw_min_inlier_ratio    = config.get('yaw_filter_min_inlier_ratio', 0.10)
+
         self._inicializar_detector_odometria()
 
     # ------------------------------------------------------------------
@@ -344,9 +349,10 @@ class OdometriaVisual(MapMatchingMixin):
             yaw_delta = euler[0]
             inlier_ratio = n_inliers / n_matches if n_matches > 0 else 0
             # Ignora rotação se: ângulo absurdo nos primeiros frames,
-            # OU taxa de inliers muito baixa (RANSAC divergiu — limiar 0.10 captura falhas
-            # genuínas sem zerar curvas legítimas com ratio 0.10–0.30)
-            if (i <= 2 and abs(yaw_delta) > 45) or inlier_ratio < 0.10:
+            # OU taxa de inliers muito baixa (RANSAC divergiu — ver
+            # pipeline.yaw_filter em config.yaml)
+            if (i <= self._yaw_max_initial_frames and abs(yaw_delta) > self._yaw_max_initial_deg) \
+                    or inlier_ratio < self._yaw_min_inlier_ratio:
                 yaw_delta = 0.0
             yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
 

@@ -101,6 +101,7 @@ def montar_config(cfg: dict) -> dict:
     OdometriaVisual.
     """
     mm = cfg.get("map_matching", {})
+    yaw_filter = cfg.get("pipeline", {}).get("yaw_filter", {})
     return {
         "detector_type":      cfg["detector"],
         # 'auto' usa GPU se disponível, senão CPU automaticamente.
@@ -121,6 +122,9 @@ def montar_config(cfg: dict) -> dict:
             k: mm[k] for k in ("inlier_thr_position", "inlier_thr_angle_scale")
             if k in mm
         },
+        "yaw_filter_max_initial_frames":  yaw_filter.get("max_initial_frames", 2),
+        "yaw_filter_max_initial_yaw_deg": yaw_filter.get("max_initial_yaw_deg", 45),
+        "yaw_filter_min_inlier_ratio":    yaw_filter.get("min_inlier_ratio", 0.10),
     }
 
 

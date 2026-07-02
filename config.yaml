@@ -102,6 +102,16 @@ map_matching:
   # inlier_thr_position:    20
   # inlier_thr_angle_scale: 40
 
+# --- Parâmetros internos do pipeline ---
+pipeline:
+  yaw_filter:
+    # Ignora a rotação estimada (yaw_delta = 0) se:
+    #   i <= max_initial_frames E |yaw_delta| > max_initial_yaw_deg
+    #   OU inlier_ratio < min_inlier_ratio (RANSAC divergiu)
+    max_initial_frames:  2
+    max_initial_yaw_deg: 45
+    min_inlier_ratio:    0.10
+
 # --- Visualização e Logs ---
 display:
   show_plot:          true    # gráfico de trajetória em tempo real
