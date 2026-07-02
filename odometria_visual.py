@@ -13,6 +13,7 @@ Módulos complementares:
 
 import os
 import time
+from dataclasses import dataclass
 import numpy as np
 import cv2 as cv
 import matplotlib.pyplot as plt
@@ -26,6 +27,18 @@ from detectors import criar_detector, TORCH_AVAILABLE
 
 if TORCH_AVAILABLE:
     import torch
+
+
+@dataclass
+class _FrameResult:
+    """Resultado de _processar_par_de_frames — estado escalar do loop em executar()."""
+    ok: bool
+    prev_features: object = None
+    yaw_acumulado_est: float = 0.0
+    dist_est_total: float = 0.0
+    dist_real_total: float = 0.0
+    inl1: object = None
+    inl2: object = None
 
 
 # ---------------------------------------------------------------------------
@@ -293,19 +306,9 @@ class OdometriaVisual(MapMatchingMixin):
         x_est_list,  y_est_list  = [x0_est],  [y0_est]
         x_real_list, y_real_list = [x0_real], [y0_real]
 
-        # --- Plotagem em tempo real ---
         show_plot = self.config['display']['show_plot']
         debug_mm  = self.config['display'].get('debug_map_matching', False)
-        if show_plot:
-            plt.ion()
-            fig, ax = plt.subplots()
-            ax.set_title("Trajetória Estimada")
-            ax.set_xlabel("X (m)")
-            ax.set_ylabel("Y (m)")
-            line_est,  = ax.plot(x_est_list,  y_est_list,  'r-', label='Estimado')
-            line_real, = ax.plot(x_real_list, y_real_list, 'b-', label='Real')
-            line_map,  = ax.plot([], [], 'g^', markersize=8, label='Map Matching', zorder=5)
-            ax.legend()
+        plot_objs = self._setup_plot(x_est_list, y_est_list, x_real_list, y_real_list)
 
         print("\nIniciando o loop de odometria...")
         xy_map_corr    = []
@@ -318,127 +321,195 @@ class OdometriaVisual(MapMatchingMixin):
         prev_features = None
 
         for i in range(num_frames - 1):
-            t0 = time.time()
-
             prev_img = self.imgs_list[i]
             curr_img = self.imgs_list[i + 1]
 
-            # 1. Correspondências (odometria)
-            pts1, pts2, kpt1, kpt2, n_matches, curr_features = self._obter_correspondencias(
-                prev_img, curr_img, prev_features, usar_absoluto=False
+            resultado = self._processar_par_de_frames(
+                i, prev_img, curr_img, prev_features,
+                yaw_acumulado_est, dist_est_total, dist_real_total,
+                lat_est_list, lon_est_list, xy_map_corr, resultados_list, debug_mm
             )
-            prev_features = curr_features
-            if pts1 is None or len(pts1) < 8:
-                print(f"Frame {i}: poucas correspondências. Pulando.")
+            prev_features     = resultado.prev_features
+            yaw_acumulado_est = resultado.yaw_acumulado_est
+            dist_est_total    = resultado.dist_est_total
+            dist_real_total   = resultado.dist_real_total
+            if not resultado.ok:
                 continue
 
-            # 2. Matriz Essencial → pose
-            result_pose = self._process_frame_pose(pts1, pts2)
-            if result_pose[0] is None:
-                print(f"Frame {i}: poucos inliers após RANSAC. Pulando.")
-                continue
-            inl1, inl2, R, t = result_pose
-            n_inliers = len(inl1)
+            continuar = self._atualizar_plot(
+                i, prev_img, curr_img, resultado.inl1, resultado.inl2,
+                lat_est_list, lon_est_list, xy_map_corr,
+                x_real_list, y_real_list, x_est_list, y_est_list,
+                show_plot, plot_objs
+            )
+            if not continuar:
+                break
 
-            # 3. Escala via GSD
-            dist_est_atual  = self._calcula_deslocamento_escala(inl1, inl2, self.gsd_list[i])
-            dist_est_total += dist_est_atual
+        self._finalizar_execucao(resultados_list, lat_est_list, lon_est_list, show_plot, debug_mm)
 
-            # 4. Yaw acumulado
-            euler     = Rotation.from_matrix(R).as_euler('zyx', degrees=True)
-            yaw_delta = euler[0]
-            inlier_ratio = n_inliers / n_matches if n_matches > 0 else 0
-            # Ignora rotação se: ângulo absurdo nos primeiros frames,
-            # OU taxa de inliers muito baixa (RANSAC divergiu — ver
-            # pipeline.yaw_filter em config.yaml)
-            if (i <= self._yaw_max_initial_frames and abs(yaw_delta) > self._yaw_max_initial_deg) \
-                    or inlier_ratio < self._yaw_min_inlier_ratio:
-                yaw_delta = 0.0
-            yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
+    def _setup_plot(self, x_est_list, y_est_list, x_real_list, y_real_list):
+        """Prepara a figura matplotlib de trajetória em tempo real (passo 'Plotagem' de executar())."""
+        if not self.config['display']['show_plot']:
+            return None
+        plt.ion()
+        fig, ax = plt.subplots()
+        ax.set_title("Trajetória Estimada")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        line_est,  = ax.plot(x_est_list,  y_est_list,  'r-', label='Estimado')
+        line_real, = ax.plot(x_real_list, y_real_list, 'b-', label='Real')
+        line_map,  = ax.plot([], [], 'g^', markersize=8, label='Map Matching', zorder=5)
+        ax.legend()
+        return (fig, ax, line_est, line_real, line_map)
 
-            # 5. Nova posição estimada
-            est_lat, est_lon = self.estima_latlon(
-                lat_est_list[-1], lon_est_list[-1], yaw_acumulado_est, dist_est_atual
+    def _processar_par_de_frames(self, i, prev_img, curr_img, prev_features,
+                                  yaw_acumulado_est, dist_est_total, dist_real_total,
+                                  lat_est_list, lon_est_list, xy_map_corr,
+                                  resultados_list, debug_mm):
+        """
+        Processa um par de frames consecutivos: correspondências, pose,
+        escala, yaw, correção por map matching e métricas (passos 1-7 do
+        pipeline). Acrescenta em lat_est_list/lon_est_list/xy_map_corr/
+        resultados_list em lugar (append) e devolve o novo estado escalar
+        do loop principal em executar().
+        """
+        t0 = time.time()
+
+        # 1. Correspondências (odometria)
+        pts1, pts2, kpt1, kpt2, n_matches, curr_features = self._obter_correspondencias(
+            prev_img, curr_img, prev_features, usar_absoluto=False
+        )
+        prev_features = curr_features
+        if pts1 is None or len(pts1) < 8:
+            print(f"Frame {i}: poucas correspondências. Pulando.")
+            return _FrameResult(False, prev_features, yaw_acumulado_est,
+                                 dist_est_total, dist_real_total)
+
+        # 2. Matriz Essencial → pose
+        result_pose = self._process_frame_pose(pts1, pts2)
+        if result_pose[0] is None:
+            print(f"Frame {i}: poucos inliers após RANSAC. Pulando.")
+            return _FrameResult(False, prev_features, yaw_acumulado_est,
+                                 dist_est_total, dist_real_total)
+        inl1, inl2, R, t = result_pose
+        n_inliers = len(inl1)
+
+        # 3. Escala via GSD
+        dist_est_atual  = self._calcula_deslocamento_escala(inl1, inl2, self.gsd_list[i])
+        dist_est_total += dist_est_atual
+
+        # 4. Yaw acumulado
+        euler     = Rotation.from_matrix(R).as_euler('zyx', degrees=True)
+        yaw_delta = euler[0]
+        inlier_ratio = n_inliers / n_matches if n_matches > 0 else 0
+        # Ignora rotação se: ângulo absurdo nos primeiros frames,
+        # OU taxa de inliers muito baixa (RANSAC divergiu — ver
+        # pipeline.yaw_filter em config.yaml)
+        if (i <= self._yaw_max_initial_frames and abs(yaw_delta) > self._yaw_max_initial_deg) \
+                or inlier_ratio < self._yaw_min_inlier_ratio:
+            yaw_delta = 0.0
+        yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
+
+        # 5. Nova posição estimada
+        est_lat, est_lon = self.estima_latlon(
+            lat_est_list[-1], lon_est_list[-1], yaw_acumulado_est, dist_est_atual
+        )
+
+        # 6. Correção por map matching (opcional)
+        n_inliers_map = 0
+        map_ok        = False
+        lat_antes_corr, lon_antes_corr = est_lat, est_lon
+        ran_map_matching = self.use_map_matching and (i % self.map_match_interval == 0)
+        if ran_map_matching:
+            (est_lat, est_lon,
+             yaw_acumulado_est,
+             self.escala_atual,
+             n_inliers_map,
+             map_ok) = self._corrigir_posicao_pelo_mapa(
+                curr_img, est_lat, est_lon, yaw_acumulado_est, i
             )
 
-            # 6. Correção por map matching (opcional)
-            n_inliers_map = 0
-            map_ok        = False
-            lat_antes_corr, lon_antes_corr = est_lat, est_lon
-            ran_map_matching = self.use_map_matching and (i % self.map_match_interval == 0)
-            if ran_map_matching:
-                (est_lat, est_lon,
-                 yaw_acumulado_est,
-                 self.escala_atual,
-                 n_inliers_map,
-                 map_ok) = self._corrigir_posicao_pelo_mapa(
-                    curr_img, est_lat, est_lon, yaw_acumulado_est, i
+        if map_ok:
+            if self.config['display'].get('show_map_matching', True):
+                self._visualizar_map_matching(
+                    i, lat_antes_corr, lon_antes_corr, est_lat, est_lon
                 )
+            x_mc, y_mc = self._latlon_to_xy(est_lat, est_lon)
+            xy_map_corr.append((x_mc, y_mc))
 
-            if map_ok:
-                if self.config['display'].get('show_map_matching', True):
-                    self._visualizar_map_matching(
-                        i, lat_antes_corr, lon_antes_corr, est_lat, est_lon
-                    )
-                x_mc, y_mc = self._latlon_to_xy(est_lat, est_lon)
-                xy_map_corr.append((x_mc, y_mc))
+        if debug_mm:
+            if ran_map_matching:
+                self._exibir_debug_patch(i, n_inliers_map, map_ok)
+            else:
+                input(f"[DEBUG] Frame {i} (map matching não executado neste intervalo)"
+                      " | Pressione ENTER para continuar...")
 
-            if debug_mm:
-                if ran_map_matching:
-                    self._exibir_debug_patch(i, n_inliers_map, map_ok)
-                else:
-                    input(f"[DEBUG] Frame {i} (map matching não executado neste intervalo)"
-                          " | Pressione ENTER para continuar...")
+        lat_est_list.append(est_lat)
+        lon_est_list.append(est_lon)
 
-            lat_est_list.append(est_lat)
-            lon_est_list.append(est_lon)
+        # 7. Métricas
+        dist_real_atual, erro_acum  = self._calculate_metrics(i, est_lat, est_lon)
+        dist_real_total            += dist_real_atual
 
-            # 7. Métricas
-            dist_real_atual, erro_acum  = self._calculate_metrics(i, est_lat, est_lon)
-            dist_real_total            += dist_real_atual
+        elapsed = time.time() - t0
+        if self.config['display'].get('print_console', True):
+            print(f'{i}\t{kpt1}\t{kpt2}\t{n_matches}\t{n_inliers}\t\t'
+                  f'{dist_real_atual:8.2f}\t{dist_est_atual:8.2f}\t'
+                  f'{erro_acum:8.2f}\t\t{elapsed:.2f}\t\t{map_ok}')
 
-            elapsed = time.time() - t0
-            if self.config['display'].get('print_console', True):
-                print(f'{i}\t{kpt1}\t{kpt2}\t{n_matches}\t{n_inliers}\t\t'
-                      f'{dist_real_atual:8.2f}\t{dist_est_atual:8.2f}\t'
-                      f'{erro_acum:8.2f}\t\t{elapsed:.2f}\t\t{map_ok}')
+        resultados_list.append({
+            "IMG": i, "KPT1": kpt1, "KPT2": kpt2,
+            "MATCHES": n_matches, "INLIERS": n_inliers,
+            "DIST_REAL": dist_real_atual, "DIST_EST": dist_est_atual,
+            "ERRO_ACUM(m)": erro_acum, "TEMPO(s)": elapsed,
+            "MAP_OK": map_ok,
+        })
 
-            resultados_list.append({
-                "IMG": i, "KPT1": kpt1, "KPT2": kpt2,
-                "MATCHES": n_matches, "INLIERS": n_inliers,
-                "DIST_REAL": dist_real_atual, "DIST_EST": dist_est_atual,
-                "ERRO_ACUM(m)": erro_acum, "TEMPO(s)": elapsed,
-                "MAP_OK": map_ok,
-            })
+        return _FrameResult(True, prev_features, yaw_acumulado_est,
+                             dist_est_total, dist_real_total, inl1, inl2)
 
-            # 8. Plotagem
-            x_r, y_r = self._latlon_to_xy(
-                self.lat_real_list[i + 1], self.lon_real_list[i + 1]
-            )
-            x_real_list.append(x_r)
-            y_real_list.append(y_r)
+    def _atualizar_plot(self, i, prev_img, curr_img, inl1, inl2,
+                         lat_est_list, lon_est_list, xy_map_corr,
+                         x_real_list, y_real_list, x_est_list, y_est_list,
+                         show_plot, plot_objs):
+        """
+        Atualiza a plotagem de trajetória em tempo real e a janela de
+        correspondências (passo 8 do pipeline). Retorna False se o loop
+        principal em executar() deve ser interrompido (usuário pressionou
+        'q' na janela de correspondências).
+        """
+        x_r, y_r = self._latlon_to_xy(
+            self.lat_real_list[i + 1], self.lon_real_list[i + 1]
+        )
+        x_real_list.append(x_r)
+        y_real_list.append(y_r)
 
-            x_e, y_e = self._latlon_to_xy(lat_est_list[-1], lon_est_list[-1])
-            x_est_list.append(x_e)
-            y_est_list.append(y_e)
+        x_e, y_e = self._latlon_to_xy(lat_est_list[-1], lon_est_list[-1])
+        x_est_list.append(x_e)
+        y_est_list.append(y_e)
 
-            if show_plot:
-                line_est.set_data(x_est_list, y_est_list)
-                line_real.set_data(x_real_list, y_real_list)
-                if xy_map_corr:
-                    xs, ys = zip(*xy_map_corr)
-                    line_map.set_data(xs, ys)
-                ax.relim()
-                ax.autoscale_view()
-                plt.draw()
-                plt.pause(0.001)
+        if show_plot:
+            fig, ax, line_est, line_real, line_map = plot_objs
+            line_est.set_data(x_est_list, y_est_list)
+            line_real.set_data(x_real_list, y_real_list)
+            if xy_map_corr:
+                xs, ys = zip(*xy_map_corr)
+                line_map.set_data(xs, ys)
+            ax.relim()
+            ax.autoscale_view()
+            plt.draw()
+            plt.pause(0.001)
 
-            if self.config['display']['show_images']:
-                self._exibir_correspondencias(prev_img, curr_img, inl1, inl2)
-                if cv.waitKey(10) & 0xFF == ord('q'):
-                    break
+        if self.config['display']['show_images']:
+            self._exibir_correspondencias(prev_img, curr_img, inl1, inl2)
+            if cv.waitKey(10) & 0xFF == ord('q'):
+                return False
 
-        # --- Finalização ---
+        return True
+
+    def _finalizar_execucao(self, resultados_list, lat_est_list, lon_est_list,
+                             show_plot, debug_mm):
+        """Escreve o CSV de resultados e os KMLs, e fecha janelas abertas."""
         Resultados = DataFrame(resultados_list) if resultados_list else DataFrame()
 
         if (self.config['display']['show_images'] or
