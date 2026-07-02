@@ -11,7 +11,6 @@ Módulos complementares:
     utils.py              — Funções utilitárias puras (KML, etc.)
 """
 
-import sys
 import os
 import time
 import numpy as np
@@ -23,43 +22,10 @@ from pyproj import Geod, Transformer
 
 from utils import criar_caminho_kml, mach_to_kml_color, _KML_COLOR_REAL
 from map_matching import MapMatchingMixin, _INLIER_THRESHOLDS, _DEFAULT_INLIER_THRESHOLDS
+from detectors import criar_detector, TORCH_AVAILABLE
 
-
-# ---------------------------------------------------------------------------
-# Imports opcionais — redes neurais
-# ---------------------------------------------------------------------------
-
-# LightGlue / SuperPoint
-caminho_lightglue = os.path.join(os.path.dirname(__file__), 'LightGlue')
-if caminho_lightglue not in sys.path:
-    sys.path.insert(0, caminho_lightglue)
-
-try:
+if TORCH_AVAILABLE:
     import torch
-    from lightglue.superpoint import SuperPoint
-    from lightglue.lightglue import LightGlue
-    from lightglue.utils import match_pair
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-
-# LoFTR (via kornia)
-try:
-    from kornia.feature import LoFTR
-    KORNIA_AVAILABLE = True
-except ImportError:
-    KORNIA_AVAILABLE = False
-
-# MatchFormer
-caminho_matchformer = os.path.join(os.path.dirname(__file__), 'MatchFormer')
-if caminho_matchformer not in sys.path:
-    sys.path.insert(0, caminho_matchformer)
-
-try:
-    from model.matchformer import Matchformer
-    MATCHFORMER_AVAILABLE = True
-except ImportError:
-    MATCHFORMER_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -164,86 +130,18 @@ class OdometriaVisual(MapMatchingMixin):
         print(f"[INFO] Device para redes neurais: {dev}")
         return dev
 
-    def _instanciar_detector(self, tipo, papel):
-        """
-        Instancia detector e matcher para qualquer tipo suportado.
-
-        Args:
-            tipo (str): 'ORB' | 'AKAZE' | 'SUPERPOINT' | 'LOFTR' | 'MATCHFORMER'
-            papel (str): 'odometria' ou 'absoluto' (apenas para log)
-
-        Returns:
-            (detector, matcher) — detector é None para LOFTR/MATCHFORMER
-        """
-        print(f"Inicializando detector [{papel}]: {tipo}")
-
-        if tipo == 'ORB':
-            params = self.config['detector_params']['orb']
-            det = cv.ORB_create(**params)
-            mat = cv.DescriptorMatcher_create(cv.DescriptorMatcher_BRUTEFORCE_HAMMING)
-            return det, mat
-
-        elif tipo == 'AKAZE':
-            params = self.config['detector_params']['akaze']
-            det = cv.AKAZE_create(**params)
-            mat = cv.DescriptorMatcher_create(cv.DescriptorMatcher_BRUTEFORCE_HAMMING)
-            return det, mat
-
-        elif tipo == 'SUPERPOINT':
-            if not TORCH_AVAILABLE:
-                raise ImportError(
-                    "PyTorch e LightGlue são necessários para SuperPoint.\n"
-                    "Instale com: pip install -r requirements-neural.txt\n"
-                    "  e clone:  git clone https://github.com/cvg/LightGlue.git\n"
-                    "Funciona em CPU — GPU não é obrigatória."
-                )
-            params = self.config['detector_params'].get('superpoint', {})
-            det = SuperPoint(**params).eval().to(self.device)
-            mat = LightGlue(features='superpoint').eval().to(self.device)
-            print(f"  SuperPoint + LightGlue [{papel}] prontos em [{self.device}]")
-            return det, mat
-
-        elif tipo == 'LOFTR':
-            if not KORNIA_AVAILABLE:
-                raise ImportError(
-                    "Kornia e PyTorch são necessários para LoFTR.\n"
-                    "Instale com: pip install -r requirements-neural.txt\n"
-                    "Funciona em CPU — GPU não é obrigatória."
-                )
-            params = self.config['detector_params'].get('loftr', {})
-            mat = LoFTR(**params).eval().to(self.device)
-            print(f"  LoFTR [{papel}] pronto em [{self.device}]")
-            return None, mat
-
-        elif tipo == 'MATCHFORMER':
-            if not MATCHFORMER_AVAILABLE:
-                raise ImportError(
-                    "A biblioteca MatchFormer não foi encontrada.\n"
-                    "Clone com: git clone https://github.com/InSAI-Lab/MatchFormer.git\n"
-                    "Instale dependências: pip install -r requirements-neural.txt\n"
-                    "Funciona em CPU — GPU não é obrigatória."
-                )
-            params = self.config['detector_params'].get('matchformer', {})
-            mat = Matchformer(params).eval().to(self.device)
-            print(f"  MatchFormer [{papel}] pronto em [{self.device}]")
-            return None, mat
-
-        else:
-            raise ValueError(
-                f"Detector desconhecido: '{tipo}'. "
-                "Escolha: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER"
-            )
-
     def _inicializar_detector_odometria(self):
-        """Instancia detector/matcher para o módulo de odometria."""
-        self.detector_odometria, self.matcher_odometria = self._instanciar_detector(
-            self.detector_type, 'odometria'
+        """Instancia o FeatureDetector do módulo de odometria."""
+        self.detector_odometria = criar_detector(
+            self.detector_type, self.config['detector_params'],
+            self.config['matcher_params'], self.device, papel='odometria'
         )
 
     def _inicializar_detector_absoluto(self):
-        """Instancia detector/matcher para o módulo de localização absoluta."""
-        self.detector_absoluto, self.matcher_absoluto = self._instanciar_detector(
-            self.absolute_detector_type, 'absoluto'
+        """Instancia o FeatureDetector do módulo de localização absoluta."""
+        self.detector_absoluto = criar_detector(
+            self.absolute_detector_type, self.config['detector_params'],
+            self.config['matcher_params'], self.device, papel='absoluto'
         )
 
     # ------------------------------------------------------------------
@@ -298,87 +196,21 @@ class OdometriaVisual(MapMatchingMixin):
     # Correspondências de features
     # ------------------------------------------------------------------
 
-    def _img_to_tensor(self, img):
-        """Converte imagem numpy para tensor PyTorch preparado para modelos neurais."""
-        return torch.from_numpy(img).float().to(self.device).unsqueeze(0).unsqueeze(0) / 255.
-
     def _obter_correspondencias(self, img1, img2, prev_features=None,
                                  usar_absoluto=False):
         """
         Detecta features e retorna pontos correspondentes entre img1 e img2.
 
         Args:
-            usar_absoluto: se True usa detector_absoluto/matcher_absoluto;
-                           se False usa detector_odometria/matcher_odometria.
+            usar_absoluto: se True usa detector_absoluto;
+                           se False usa detector_odometria.
 
         Returns:
             pts1, pts2, kpt_count1, kpt_count2, match_count, curr_features
         """
-        if usar_absoluto:
-            det_type = self.absolute_detector_type
-            det = self.detector_absoluto
-            mat = self.matcher_absoluto
-        else:
-            det_type = self.detector_type
-            det = self.detector_odometria
-            mat = self.matcher_odometria
-
-        curr_features = None
-
-        if det_type in ('ORB', 'AKAZE'):
-            kp1, des1 = prev_features if prev_features is not None else det.detectAndCompute(img1, None)
-            kp2, des2 = det.detectAndCompute(img2, None)
-            curr_features = (kp2, des2)
-
-            if des1 is None or des2 is None:
-                return (None, None,
-                        len(kp1) if kp1 else 0,
-                        len(kp2) if kp2 else 0,
-                        0, curr_features)
-
-            ratio = self.config['matcher_params']['nn_match_ratio']
-            good  = [m for m, n in mat.knnMatch(des1, des2, k=2)
-                     if m.distance < ratio * n.distance]
-
-            pts1 = np.float32([kp1[m.queryIdx].pt for m in good])
-            pts2 = np.float32([kp2[m.trainIdx].pt for m in good])
-            return pts1, pts2, len(kp1), len(kp2), len(good), curr_features
-
-        elif det_type == 'SUPERPOINT':
-            t1 = self._img_to_tensor(img1)
-            t2 = self._img_to_tensor(img2)
-
-            feats1, feats2, matches01 = match_pair(det, mat, t1, t2)
-            kp1     = feats1['keypoints']
-            kp2     = feats2['keypoints']
-            matches = matches01['matches']
-
-            pts1 = kp1[matches[:, 0]].cpu().numpy()
-            pts2 = kp2[matches[:, 1]].cpu().numpy()
-            return pts1, pts2, len(kp1), len(kp2), len(matches), None
-
-        elif det_type == 'LOFTR':
-            t1 = self._img_to_tensor(img1)
-            t2 = self._img_to_tensor(img2)
-            with torch.inference_mode():
-                corr = mat({'image0': t1, 'image1': t2})
-            pts1 = corr['keypoints0'].cpu().numpy()
-            pts2 = corr['keypoints1'].cpu().numpy()
-            n = len(pts1)
-            return pts1, pts2, n, n, n, None
-
-        elif det_type == 'MATCHFORMER':
-            t1 = self._img_to_tensor(img1)
-            t2 = self._img_to_tensor(img2)
-            data = {'image0': t1, 'image1': t2}
-            with torch.inference_mode():
-                mat(data)  # modifica data in-place, não retorna nada
-            pts1 = data['mkpts0_f'].cpu().numpy()
-            pts2 = data['mkpts1_f'].cpu().numpy()
-            n = len(pts1)
-            return pts1, pts2, n, n, n, None
-
-        return None, None, 0, 0, 0, None
+        det = self.detector_absoluto if usar_absoluto else self.detector_odometria
+        r = det.match(img1, img2, prev_state=prev_features)
+        return r.pts1, r.pts2, r.kpt_count1, r.kpt_count2, r.match_count, r.state
 
     # ------------------------------------------------------------------
     # Helpers de cálculo geográfico
