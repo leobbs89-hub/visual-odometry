@@ -60,7 +60,8 @@ detector_params:
     pretrained: outdoor   # outdoor ou indoor
 
   matchformer:
-    backbone_type: largesea   # litela | largela | litesea | largesea
+    backbone_type: largela   # litela | largela | litesea | largesea
+    ckpt_path: "MatchFormer/weights/outdoor-large-LA.ckpt"   # relativo à pasta visual-odometry/
     resolution: [8, 2]
     fine_window_size: 5
     fine_concat_coarse_feat: true

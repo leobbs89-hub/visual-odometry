@@ -17,9 +17,11 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 | **AKAZE** | Clássico | OpenCV (incluso) |
 | **SuperPoint + LightGlue** | Rede neural | torch + [LightGlue](https://github.com/cvg/LightGlue) |
 | **LoFTR** | Rede neural | torch + kornia |
-| **MatchFormer** | Rede neural | torch + [MatchFormer](https://github.com/gaopengcuhk/MatchFormer) |
+| **MatchFormer** | Rede neural | torch + [MatchFormer](https://github.com/InSAI-Lab/MatchFormer) + checkpoint pré-treinado |
 
 > Os detectores neurais **funcionam em CPU** — GPU acelera mas não é obrigatória.
+>
+> **MatchFormer** exige um checkpoint pré-treinado baixado manualmente (não vem com o clone do repositório) — ver [Checkpoint do MatchFormer](#checkpoint-do-matchformer).
 
 ---
 
@@ -28,9 +30,11 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ```
 ├── main.py                  # Ponto de entrada + parsing do config.yaml
 ├── odometria_visual.py      # Classe OdometriaVisual — todo o pipeline
+├── detectors.py             # Detectores/matchers (ORB, AKAZE, SuperPoint, LoFTR, MatchFormer)
 ├── map_matching.py          # MapMatchingMixin — localização absoluta via GeoTIFF
 ├── utils.py                 # Funções puras: KML, geração de rota
 ├── criar_rota_quadrado.py   # Geração de rota quadrada simulada + CSV/KML
+├── rodar_experimentos.py    # Automação de baterias de experimentos (rotas × machs × detectores)
 ├── config.yaml              # Parâmetros editáveis (caminhos, câmera, detector)
 ├── requirements.txt         # Dependências base (ORB e AKAZE)
 ├── requirements-neural.txt  # Dependências extras para redes neurais
@@ -84,6 +88,32 @@ pip install -r requirements.txt
 pip install -r requirements-neural.txt
 git clone https://github.com/cvg/LightGlue.git && pip install -e LightGlue/
 git clone https://github.com/InSAI-Lab/MatchFormer.git
+```
+
+### Checkpoint do MatchFormer
+
+Diferente de SuperPoint e LoFTR (que baixam pesos pré-treinados automaticamente), o MatchFormer **não carrega nenhum checkpoint por padrão** — é preciso baixar manualmente, ou o modelo roda com pesos aleatórios (não representativo do método).
+
+```bash
+pip install gdown
+python -c "
+import gdown, os
+files = gdown.download_folder(
+    url='https://drive.google.com/drive/folders/1JSnoQMfr32eoIXwJ1gpwUaPKv4kjdqJ7',
+    skip_download=True)
+alvo = next(f for f in files if f.path == 'outdoor-large-LA.ckpt')
+os.makedirs('MatchFormer/weights', exist_ok=True)
+gdown.download(id=alvo.id, output='MatchFormer/weights/outdoor-large-LA.ckpt')
+"
+```
+
+Variante recomendada para imagens aéreas/exteriores: **`outdoor-large-LA.ckpt`** (backbone LA, treinado em cenas outdoor). Aponte o caminho em `config.yaml`:
+
+```yaml
+detector_params:
+  matchformer:
+    backbone_type: largela   # precisa bater com o checkpoint escolhido
+    ckpt_path: "MatchFormer/weights/outdoor-large-LA.ckpt"
 ```
 
 ---

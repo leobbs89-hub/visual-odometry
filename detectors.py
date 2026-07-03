@@ -212,9 +212,36 @@ class MatchFormerDetector(FeatureDetector):
                 "Instale dependências: pip install -r requirements-neural.txt\n"
                 "Funciona em CPU — GPU não é obrigatória."
             )
+        params = dict(params)
+        ckpt_path = params.pop('ckpt_path', None)
+        if not ckpt_path:
+            raise ValueError(
+                "detector_params.matchformer.ckpt_path não configurado em config.yaml.\n"
+                "Baixe um checkpoint pré-treinado (ex: outdoor-large-LA.ckpt) em "
+                "https://github.com/InSAI-Lab/MatchFormer e aponte o caminho em ckpt_path — "
+                "sem isso o modelo roda com pesos aleatórios (não representativo)."
+            )
+        ckpt_path_abs = ckpt_path if os.path.isabs(ckpt_path) else os.path.join(
+            os.path.dirname(caminho_matchformer), ckpt_path
+        )
+        if not os.path.isfile(ckpt_path_abs):
+            raise FileNotFoundError(
+                f"Checkpoint do MatchFormer não encontrado em '{ckpt_path_abs}'.\n"
+                "Baixe o .ckpt pré-treinado (ex: outdoor-large-LA.ckpt) do Google Drive "
+                "oficial do repositório e coloque no caminho configurado em ckpt_path."
+            )
+
         self.device = device
         self.mat = Matchformer(params).eval().to(device)
-        logger.info("MatchFormer [%s] pronto em [%s]", papel, device)
+        state_dict = {
+            k.replace('matcher.', ''): v
+            for k, v in torch.load(ckpt_path_abs, map_location='cpu').items()
+        }
+        self.mat.load_state_dict(state_dict)
+        logger.info(
+            "MatchFormer [%s] pronto em [%s] — checkpoint carregado de [%s]",
+            papel, device, ckpt_path_abs
+        )
 
     def match(self, img1, img2, prev_state=None):
         t1 = _img_to_tensor(img1, self.device)
