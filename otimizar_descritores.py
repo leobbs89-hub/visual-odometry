@@ -54,7 +54,7 @@ DESCRITORES = ["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"]
 
 # Se definido, roda apenas os descritores listados aqui (None = todos).
 # Ao fundir resultados, os descritores ausentes são lidos do resumo_inliers.csv.
-DESCRITORES_FILTRO = ["SIFT"]  # ex: ["SUPERPOINT", "MATCHFORMER"]
+DESCRITORES_FILTRO = ["MATCHFORMER"]  # ex: ["SUPERPOINT", "MATCHFORMER"]
 
 
 # ==========================================
@@ -94,9 +94,11 @@ SWEEPS = {
         (("detector_params", "loftr", "pretrained"), ["outdoor", "indoor"]),
     ],
     "MATCHFORMER": [
-        (("detector_params", "matchformer", "match_coarse", "thr"), [0.1, 0.2, 0.3]),
-        (("detector_params", "matchformer", "backbone_type"),
-         ["litela", "largela", "litesea", "largesea"]),
+        # backbone_type não é varrido: só há checkpoint baixado para "largela"
+        # (outdoor-large-LA.ckpt); os outros backbones exigiriam pesos próprios
+        # e, sem eles, o load_state_dict cairia de volta em pesos aleatórios.
+        (("detector_params", "matchformer", "match_coarse", "thr"),
+         [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35]),
     ],
 }
 
