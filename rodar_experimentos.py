@@ -1,8 +1,8 @@
 """
 Roda todos os experimentos de odometria visual:
-  - ORB, AKAZE:             1 run por combinação  →  2 rotas × 7 machs × 2 = 28 runs
+  - ORB, AKAZE, SIFT:       1 run por combinação  →  2 rotas × 7 machs × 3 = 42 runs
   - SUPERPOINT, LOFTR:      2 runs (GPU + CPU)    →  2 rotas × 7 machs × 2 × 2 = 56 runs
-  Total: 84 runs
+  Total: 98 runs
 
 Uso:
     python rodar_experimentos.py                    # todas as combinações
@@ -31,7 +31,7 @@ from odometria_visual import OdometriaVisual
 BASE_TESE = Path(r"C:\Users\bbs_l\OneDrive\Leandro\ITA\MESTRADO\Tese\rotas_quadradas")
 ROTAS     = ["FLORESTA", "URBANO"]
 MACHS     = [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0]
-DETECTORS = ["ORB", "AKAZE", "SUPERPOINT", "LOFTR", "MATCHFORMER"]
+DETECTORS = ["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"]
 
 NEURAL_DETECTORS = {"SUPERPOINT", "LOFTR", "MATCHFORMER"}
 # (tag usada no nome da pasta, device passado ao pipeline)
@@ -62,6 +62,26 @@ _DET_PARAMS = {
             "nOctaveLayers":       6,
             "diffusivity":         "PM_G1",
         }
+    },
+    "SIFT": {
+        "FLORESTA": {
+            "sift": {
+                "nfeatures":          3000,
+                "nOctaveLayers":       3,
+                "contrastThreshold":   0.04,
+                "edgeThreshold":       10,
+                "sigma":                1.6,
+            }
+        },
+        "URBANO": {
+            "sift": {
+                "nfeatures":          3000,
+                "nOctaveLayers":       4,
+                "contrastThreshold":   0.01,
+                "edgeThreshold":       20,
+                "sigma":                1.2,
+            }
+        },
     },
     "SUPERPOINT": {
         "FLORESTA": {
@@ -142,8 +162,8 @@ def montar_cfg(rota: str, mach: float, detector: str,
     Monta config no formato esperado por montar_config() de main.py.
     output_folder: nome da subpasta dentro de results/ (ex: 'ORB', 'SUPERPOINT_GPU').
     """
-    if detector == "SUPERPOINT":
-        det_params = dict(_DET_PARAMS["SUPERPOINT"][rota])
+    if detector in ("SUPERPOINT", "SIFT"):
+        det_params = dict(_DET_PARAMS[detector][rota])
     elif detector == "MATCHFORMER":
         det_params = {}
     else:

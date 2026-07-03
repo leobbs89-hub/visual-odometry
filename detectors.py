@@ -1,7 +1,7 @@
 # detectors.py
 """
 Interface comum para os detectores/matchers de features suportados pelo
-pipeline de Odometria Visual (ORB, AKAZE, SUPERPOINT, LOFTR, MATCHFORMER).
+pipeline de Odometria Visual (ORB, AKAZE, SIFT, SUPERPOINT, LOFTR, MATCHFORMER).
 
 Cada classe encapsula exatamente a lógica de inicialização e matching que
 antes vivia espalhada em OdometriaVisual._instanciar_detector() e
@@ -146,6 +146,36 @@ class AkazeDetector(FeatureDetector):
         return MatchResult(pts1, pts2, len(kp1), len(kp2), len(good), curr_state)
 
 
+class SiftDetector(FeatureDetector):
+    name = "SIFT"
+
+    def __init__(self, params, matcher_params, device=None, papel="odometria"):
+        self.det = cv.SIFT_create(**params)
+        self.mat = cv.DescriptorMatcher_create(cv.DescriptorMatcher_BRUTEFORCE)
+        self.nn_match_ratio = matcher_params['nn_match_ratio']
+        logger.info("SIFT [%s] pronto", papel)
+
+    def match(self, img1, img2, prev_state=None):
+        kp1, des1 = prev_state if prev_state is not None else self.det.detectAndCompute(img1, None)
+        kp2, des2 = self.det.detectAndCompute(img2, None)
+        curr_state = (kp2, des2)
+
+        if des1 is None or des2 is None:
+            return MatchResult(
+                None, None,
+                len(kp1) if kp1 else 0,
+                len(kp2) if kp2 else 0,
+                0, curr_state,
+            )
+
+        good = [m for m, n in self.mat.knnMatch(des1, des2, k=2)
+                if m.distance < self.nn_match_ratio * n.distance]
+
+        pts1 = np.float32([kp1[m.queryIdx].pt for m in good])
+        pts2 = np.float32([kp2[m.trainIdx].pt for m in good])
+        return MatchResult(pts1, pts2, len(kp1), len(kp2), len(good), curr_state)
+
+
 class SuperPointDetector(FeatureDetector):
     name = "SUPERPOINT"
 
@@ -258,6 +288,7 @@ class MatchFormerDetector(FeatureDetector):
 _REGISTRY = {
     'ORB':         OrbDetector,
     'AKAZE':       AkazeDetector,
+    'SIFT':        SiftDetector,
     'SUPERPOINT':  SuperPointDetector,
     'LOFTR':       LoftrDetector,
     'MATCHFORMER': MatchFormerDetector,
@@ -269,10 +300,10 @@ def criar_detector(tipo, detector_params, matcher_params, device, papel='odometr
     Instancia o FeatureDetector correspondente a `tipo`.
 
     Args:
-        tipo (str): 'ORB' | 'AKAZE' | 'SUPERPOINT' | 'LOFTR' | 'MATCHFORMER'
+        tipo (str): 'ORB' | 'AKAZE' | 'SIFT' | 'SUPERPOINT' | 'LOFTR' | 'MATCHFORMER'
         detector_params (dict): config['detector_params'] completo (a classe
             extrai a chave que precisa, ex: detector_params['orb']).
-        matcher_params (dict): config['matcher_params'] (usado por ORB/AKAZE).
+        matcher_params (dict): config['matcher_params'] (usado por ORB/AKAZE/SIFT).
         device: torch.device ou None.
         papel (str): 'odometria' ou 'absoluto' (apenas para log).
 
@@ -285,9 +316,9 @@ def criar_detector(tipo, detector_params, matcher_params, device, papel='odometr
     if cls is None:
         raise ValueError(
             f"Detector desconhecido: '{tipo}'. "
-            "Escolha: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER"
+            "Escolha: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER"
         )
 
     key = tipo.lower()
-    params = detector_params.get(key, {}) if tipo not in ('ORB', 'AKAZE') else detector_params[key]
+    params = detector_params.get(key, {}) if tipo not in ('ORB', 'AKAZE', 'SIFT') else detector_params[key]
     return cls(params, matcher_params, device, papel)

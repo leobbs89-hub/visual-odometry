@@ -15,6 +15,7 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 |---|---|---|
 | **ORB** | Clássico | OpenCV (incluso) |
 | **AKAZE** | Clássico | OpenCV (incluso) |
+| **SIFT** | Clássico | OpenCV (incluso) |
 | **SuperPoint + LightGlue** | Rede neural | torch + [LightGlue](https://github.com/cvg/LightGlue) |
 | **LoFTR** | Rede neural | torch + kornia |
 | **MatchFormer** | Rede neural | torch + [MatchFormer](https://github.com/InSAI-Lab/MatchFormer) + checkpoint pré-treinado |
@@ -30,11 +31,12 @@ Pipeline em Python para estimativa de trajetória de câmera a partir de sequên
 ```
 ├── main.py                  # Ponto de entrada + parsing do config.yaml
 ├── odometria_visual.py      # Classe OdometriaVisual — todo o pipeline
-├── detectors.py             # Detectores/matchers (ORB, AKAZE, SuperPoint, LoFTR, MatchFormer)
+├── detectors.py             # Detectores/matchers (ORB, AKAZE, SIFT, SuperPoint, LoFTR, MatchFormer)
 ├── map_matching.py          # MapMatchingMixin — localização absoluta via GeoTIFF
 ├── utils.py                 # Funções puras: KML, geração de rota
 ├── criar_rota_quadrado.py   # Geração de rota quadrada simulada + CSV/KML
 ├── rodar_experimentos.py    # Automação de baterias de experimentos (rotas × machs × detectores)
+├── otimizar_descritores.py  # Sweep OFAT de parâmetros por descritor (rotas de 2 frames)
 ├── config.yaml              # Parâmetros editáveis (caminhos, câmera, detector)
 ├── requirements.txt         # Dependências base (ORB e AKAZE)
 ├── requirements-neural.txt  # Dependências extras para redes neurais
@@ -136,7 +138,7 @@ camera:
   h_fov: 71.56   # graus
   v_fov: 71.56
 
-detector: ORB   # ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
+detector: ORB   # ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER
 device: auto    # auto | cpu | cuda
 ```
 

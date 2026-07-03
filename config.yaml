@@ -23,7 +23,7 @@ camera:
   v_fov:  60   # vertical field of view (graus)
 
 # --- Detector ---
-# Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
+# Opções: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER
 detector: ORB
 
 # --- Dispositivo para detectores neurais (SUPERPOINT, LOFTR, MATCHFORMER) ---
@@ -52,6 +52,16 @@ detector_params:
     nOctaves:            4
     nOctaveLayers:       4
     diffusivity:         PM_G2   # PM_G1 | PM_G2 | WEICKERT | CHARBONNIER
+
+  sift:
+    # Otimizado via OFAT (jul/2026) — valores para FLORESTA (textura natural).
+    # URBANO se beneficia de contrastThreshold=0.01, edgeThreshold=20, sigma=1.2,
+    # nOctaveLayers=4 (ver rodar_experimentos.py e relatorio_otimizacao.md).
+    nfeatures:          3000
+    nOctaveLayers:       3
+    contrastThreshold:   0.04
+    edgeThreshold:       10
+    sigma:                1.6
 
   superpoint:
     max_num_keypoints: 800

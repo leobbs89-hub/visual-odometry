@@ -147,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--detector", "-d",
-        choices=["ORB", "AKAZE", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
+        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
         help="Sobrescreve o campo 'detector' do config.yaml",
     )
     parser.add_argument(
@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--abs-detector",
-        choices=["ORB", "AKAZE", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
+        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
         dest="abs_detector",
         help=(
             "Sobrescreve o detector do módulo de localização absoluta "
