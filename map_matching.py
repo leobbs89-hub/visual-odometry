@@ -72,9 +72,12 @@ class MapMatchingMixin:
 
     Atributos esperados na classe hospedeira (definidos em __init__):
         self.config, self.map_dataset, self._map_transformer,
-        self.roi_size_m, self.escala_atual, self.scale_search_step,
+        self.roi_margin_factor, self.escala_atual, self.scale_search_step,
         self.inlier_thr_position, self.inlier_thr_angle_scale,
-        self.fx  (para _inicializar_escala)
+        self.fx, self.cx  (para _inicializar_escala)
+
+    self.roi_size_m e self.gsd_voo_efetivo são calculados dinamicamente por
+    _inicializar_escala (não são lidos diretamente do config — ver método).
 
     Métodos esperados na classe hospedeira:
         self._obter_correspondencias(...)
@@ -101,17 +104,35 @@ class MapMatchingMixin:
             logger.info("CRS do GeoTIFF: %s (geográfico — sem reproj)", map_crs)
 
     def _inicializar_escala(self, altura_inicial):
-        """Estima escala inicial entre imagem aérea e mapa satelital."""
-        pixel_size = abs(self.map_dataset.transform.a)
-        if self.map_dataset.crs and self.map_dataset.crs.is_geographic:
-            res_mapa_m = pixel_size * np.radians(1) * 6_371_000
-        else:
-            res_mapa_m = pixel_size
+        """
+        Calcula o GSD de referência do voo e deriva roi_size_m dinamicamente
+        a partir dele (em vez de um valor fixo em metros no config).
+
+        gsd_voo_efetivo já é ajustado para o tamanho real do patch usado no
+        matching (_MAP_MATCH_TARGET_PX=480px), não o tamanho original da
+        câmera (ex. 640px) — sem esse ajuste a escala de referência ficaria
+        sistematicamente ~(largura_original/TARGET) mais fina do que deveria.
+
+        A partir desta inicialização, a conversão de resolução mapa→voo é
+        feita explicitamente em _preparar_patch_satelital (reamostragem do
+        crop bruto para casar com gsd_voo_efetivo); 'escala' deixa de
+        carregar essa conversão de unidades e passa a ser só o fator de
+        ajuste fino (~1.0) que a busca gulosa (_busca_escala,
+        ±scale_search_step por frame) refina frame a frame.
+        """
+        largura_camera_original = 2.0 * self.cx
         gsd_voo = altura_inicial / self.fx
-        self.escala_atual = max(gsd_voo / res_mapa_m, 0.01)
+        self.gsd_voo_efetivo = gsd_voo * (largura_camera_original / _MAP_MATCH_TARGET_PX)
+
+        self.roi_size_m = _MAP_MATCH_TARGET_PX * self.gsd_voo_efetivo * self.roi_margin_factor
+
+        self.escala_atual = 1.0
         self._escala_inicializada = True
-        logger.info("Escala inicial: %.4f (GSD=%.3fm/px, res_mapa=%.3fm/px)",
-                    self.escala_atual, gsd_voo, res_mapa_m)
+        logger.info(
+            "GSD do voo (efetivo, TARGET=%dpx): %.3fm/px | roi_size_m derivado: "
+            "%.1fm (roi_margin_factor=%.2f) | escala inicial: 1.0",
+            _MAP_MATCH_TARGET_PX, self.gsd_voo_efetivo, self.roi_size_m, self.roi_margin_factor
+        )
 
     # ------------------------------------------------------------------
     # Preparação do patch satelital
@@ -138,7 +159,23 @@ class MapMatchingMixin:
             maxx, maxy = self._map_transformer.transform(maxx, maxy)
 
         window = from_bounds(minx, miny, maxx, maxy, self.map_dataset.transform)
-        patch = self.map_dataset.read(1, window=window)
+
+        # boundless=True é essencial: sem isso, uma janela que ultrapassa os
+        # limites do GeoTIFF é silenciosamente recortada pelo rasterio, o
+        # que desloca o centro geográfico real do patch em relação ao centro
+        # pedido (lat, lon) sem gerar erro — corrompendo a geo-referência
+        # (T_final) mesmo com matching/inliers aparentemente corretos.
+        ds_w, ds_h = self.map_dataset.width, self.map_dataset.height
+        if (window.col_off < 0 or window.row_off < 0 or
+                window.col_off + window.width > ds_w or
+                window.row_off + window.height > ds_h):
+            logger.warning(
+                "ROI do map matching ultrapassa os limites do GeoTIFF perto de "
+                "(%.6f, %.6f) — roi_size_m=%.0fm pode ser grande demais para a "
+                "cobertura do mapa base nesta posição; preenchendo com zero "
+                "fora da área coberta.", lat, lon, self.roi_size_m
+            )
+        patch = self.map_dataset.read(1, window=window, boundless=True, fill_value=0)
         patch_transform = self.map_dataset.window_transform(window)
 
         if patch.size == 0:
@@ -150,51 +187,80 @@ class MapMatchingMixin:
             patch_8u = np.zeros_like(patch, dtype=np.uint8)
         return patch_8u, patch_transform
 
-    def _preparar_patch_satelital(self, lat, lon, angulo_graus, escala):
+    def _preparar_patch_satelital(self, lat, lon, angulo_graus, escala, gsd_voo=None):
         """
         Prepara patch satelital para comparação (Seção 3.2.3 da dissertação):
         1. Recorta patch maior com margem (_recortar_roi_mapa)
-        2. Redimensiona proporcionalmente se maior que TARGET
+        2. Reamostra o crop bruto para que sua resolução (m/px) case com o
+           GSD da imagem aérea (gsd_voo) — não apenas "cabe em TARGET px"
+           como antes (esse resize por tamanho, dissociado do GSD, era parte
+           do bug de escala: com ROI grande sobre mapa de alta resolução
+           nativa, degradava a resolução do patch antes de a escala atuar)
         3. Rotaciona pelo angulo_graus (_rotacionar_imagem)
-        4. Aplica escala e crop central para TARGET×TARGET
+        4. Aplica escala fina (ajuste da busca gulosa) e crop/padding central
+           para TARGET×TARGET
 
         Retorna: (patch_final, T_final, M_rot_inv, shape_antes_rot)
         onde T_final mapeia pixels do patch_final para coordenadas geo.
         """
         TARGET = _MAP_MATCH_TARGET_PX
+        MAX_PATCH_PX = 4000  # cap de segurança contra upsample explosivo
         escala = max(escala, 0.01)
+        gsd_voo = gsd_voo if gsd_voo is not None else self.gsd_voo_efetivo
 
         # 1. Recortar com margem
         patch_big, T_big = self._recortar_roi_mapa(lat, lon, margem_extra=1.5)
 
-        # 2. Redimensionar se maior que TARGET
+        # 2. Reamostrar para casar a resolução do crop com o GSD do voo
         h_big, w_big = patch_big.shape[:2]
-        max_dim = max(h_big, w_big)
-        if max_dim > TARGET:
-            scale_r = TARGET / max_dim
-            new_w = max(1, int(w_big * scale_r))
-            new_h = max(1, int(h_big * scale_r))
-            patch_resized = cv.resize(patch_big, (new_w, new_h))
-            T_resized = Affine(
-                T_big.a / scale_r, T_big.b / scale_r, T_big.c,
-                T_big.d / scale_r, T_big.e / scale_r, T_big.f
+        res_mapa_m = abs(T_big.a)
+        fator_resample = (res_mapa_m / gsd_voo) if gsd_voo > 0 else 1.0
+        novo_w = max(1, int(round(w_big * fator_resample)))
+        novo_h = max(1, int(round(h_big * fator_resample)))
+        if max(novo_w, novo_h) > MAX_PATCH_PX:
+            cap = MAX_PATCH_PX / max(novo_w, novo_h)
+            novo_w = max(1, int(novo_w * cap))
+            novo_h = max(1, int(novo_h * cap))
+            fator_resample *= cap
+            logger.warning(
+                "Patch satelital excedeu %dpx na reamostragem; aplicado cap "
+                "de segurança (roi_size_m/gsd_voo incoerentes?)", MAX_PATCH_PX
             )
-        else:
-            patch_resized = patch_big
-            T_resized = T_big
+        interp = cv.INTER_AREA if fator_resample < 1.0 else cv.INTER_LINEAR
+        patch_resized = cv.resize(patch_big, (novo_w, novo_h), interpolation=interp)
+        T_resized = Affine(
+            T_big.a / fator_resample, T_big.b / fator_resample, T_big.c,
+            T_big.d / fator_resample, T_big.e / fator_resample, T_big.f
+        )
 
         shape_antes_rot = patch_resized.shape
 
         # 3. Rotacionar
         patch_rot, M_rot_inv = _rotacionar_imagem(patch_resized, angulo_graus)
 
-        # 4. Aplicar escala e crop central para TARGET×TARGET
+        # 4. Aplicar escala fina e crop/padding central para TARGET×TARGET
         h_rot, w_rot = patch_rot.shape[:2]
-        new_w_s = max(1, int(w_rot * escala))
-        new_h_s = max(1, int(h_rot * escala))
+        new_w_s = max(1, int(round(w_rot * escala)))
+        new_h_s = max(1, int(round(h_rot * escala)))
         patch_scaled = cv.resize(patch_rot, (new_w_s, new_h_s))
 
         h_s, w_s = patch_scaled.shape[:2]
+        pad_top = pad_left = 0
+        if h_s < TARGET or w_s < TARGET:
+            logger.debug(
+                "Patch satelital menor que TARGET (%dx%d) — roi_size_m pode "
+                "estar pequeno para o gsd_voo atual; aplicando padding.",
+                w_s, h_s
+            )
+            pad_h = max(0, TARGET - h_s)
+            pad_w = max(0, TARGET - w_s)
+            pad_top, pad_left = pad_h // 2, pad_w // 2
+            patch_scaled = cv.copyMakeBorder(
+                patch_scaled, pad_top, pad_h - pad_top, pad_left, pad_w - pad_left,
+                cv.BORDER_CONSTANT, value=0
+            )
+            h_s, w_s = patch_scaled.shape[:2]
+
         y1 = max(0, (h_s - TARGET) // 2)
         x1 = max(0, (w_s - TARGET) // 2)
         y2 = min(h_s, y1 + TARGET)
@@ -202,9 +268,13 @@ class MapMatchingMixin:
         patch_final = patch_scaled[y1:y2, x1:x2]
 
         # Compor transformação inversa completa: patch_final → geo
+        # Origem do crop relativa a patch_scaled ANTES do padding (padding só
+        # estende bordas com zero, não desloca a origem geo do conteúdo real)
+        x1_sem_pad = x1 - pad_left
+        y1_sem_pad = y1 - pad_top
         # M_cs: crop+escala inverso (patch_final → patch_rot)
-        M_cs = Affine(1.0 / escala, 0.0, x1 / escala,
-                      0.0, 1.0 / escala, y1 / escala)
+        M_cs = Affine(1.0 / escala, 0.0, x1_sem_pad / escala,
+                      0.0, 1.0 / escala, y1_sem_pad / escala)
         # M_rot_affine: rotação inversa (patch_rot → patch_resized)
         M_rot_affine = Affine(
             M_rot_inv[0, 0], M_rot_inv[0, 1], M_rot_inv[0, 2],

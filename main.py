@@ -118,7 +118,7 @@ def montar_config(cfg: dict) -> dict:
         "display":            cfg.get("display", {"show_plot": True, "show_images": False, "print_console": True}),
         "use_map_matching":   mm.get("enabled", False),
         "map_match_interval": mm.get("interval", 1),
-        "roi_size_m":         mm.get("roi_size_m", 1000),
+        "roi_margin_factor":  mm.get("roi_margin_factor", 1.3),
         "absolute_detector_type": mm.get("absolute_detector", cfg["detector"]),
         "scale_search_step":      mm.get("scale_search_step", 0.05),
         "map_matching_params":    {

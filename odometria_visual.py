@@ -77,7 +77,11 @@ class OdometriaVisual(MapMatchingMixin):
         self.use_map_matching = config.get('use_map_matching', False)
         if self.use_map_matching:
             self.map_match_interval = config.get('map_match_interval', 1)
-            self.roi_size_m         = config.get('roi_size_m', 1000)
+            # roi_size_m não vem mais fixo do config — é derivado em
+            # _inicializar_escala() a partir de gsd_voo_efetivo *
+            # roi_margin_factor (evita reintroduzir o bug de ROI
+            # incompatível com o GSD real do voo em outro dataset/altitude).
+            self.roi_margin_factor  = config.get('roi_margin_factor', 1.3)
             self.scale_search_step  = config.get('scale_search_step', 0.05)
 
             mm_params = config.get('map_matching_params', {})
