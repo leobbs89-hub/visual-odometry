@@ -144,10 +144,14 @@ pipeline:
   yaw_filter:
     # Ignora a rotação estimada (yaw_delta = 0) se:
     #   i <= max_initial_frames E |yaw_delta| > max_initial_yaw_deg
-    #   OU inlier_ratio < min_inlier_ratio (RANSAC divergiu)
+    #   OU qualidade do frame baixa (RANSAC divergiu / matches de baixa confiança):
+    #     - detectores clássicos (ORB/AKAZE/SIFT, sem confiança por match): inlier_ratio < min_inlier_ratio
+    #     - detectores neurais (SUPERPOINT/LOFTR/MATCHFORMER, expõem confiança por match):
+    #       confiança média dos inliers do RANSAC < min_confidence
     max_initial_frames:  2
     max_initial_yaw_deg: 45
     min_inlier_ratio:    0.10
+    min_confidence:      0.20
 
 # --- Visualização e Logs ---
 display:

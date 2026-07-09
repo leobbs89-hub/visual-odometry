@@ -88,6 +88,10 @@ class OdometriaVisual(MapMatchingMixin):
             # escala — ver map_matching.py::_busca_angulo.
             self.angle_search_range_deg  = config.get('angle_search_range_deg', 30.0)
             self.angle_search_candidates = config.get('angle_search_candidates', 5)
+            # Estratégia de estimativa de ângulo (ver map_matching.py::
+            # _corrigir_posicao_pelo_mapa para o dispatch): 'grid_search'
+            # (default), 'fourier_mellin' ou 'orientation_voting'.
+            self.angle_estimation_method = config.get('angle_estimation_method', 'grid_search')
             # roi_center_mode='real_bbox' é um modo DIAGNÓSTICO: usa a
             # coordenada real (GT) só para centralizar/dimensionar a ROI de
             # busca (garantindo que a posição real esteja sempre dentro do
@@ -138,6 +142,7 @@ class OdometriaVisual(MapMatchingMixin):
         self._yaw_max_initial_frames  = config.get('yaw_filter_max_initial_frames', 2)
         self._yaw_max_initial_deg     = config.get('yaw_filter_max_initial_yaw_deg', 45)
         self._yaw_min_inlier_ratio    = config.get('yaw_filter_min_inlier_ratio', 0.10)
+        self._yaw_min_confidence      = config.get('yaw_filter_min_confidence', 0.2)
 
         self._inicializar_detector_odometria()
 
@@ -251,11 +256,11 @@ class OdometriaVisual(MapMatchingMixin):
                            se False usa detector_odometria.
 
         Returns:
-            pts1, pts2, kpt_count1, kpt_count2, match_count, curr_features
+            pts1, pts2, kpt_count1, kpt_count2, match_count, curr_features, confidences
         """
         det = self.detector_absoluto if usar_absoluto else self.detector_odometria
         r = det.match(img1, img2, prev_state=prev_features)
-        return r.pts1, r.pts2, r.kpt_count1, r.kpt_count2, r.match_count, r.state
+        return r.pts1, r.pts2, r.kpt_count1, r.kpt_count2, r.match_count, r.state, r.confidences
 
     # ------------------------------------------------------------------
     # Helpers de cálculo geográfico
@@ -310,12 +315,12 @@ class OdometriaVisual(MapMatchingMixin):
         inl2 = pts2[mask_e.ravel() == 1]
 
         if len(inl1) < 5:
-            return None, None, None, None
+            return None, None, None, None, None
 
         _, R, t, _ = cv.recoverPose(
             E, inl1, inl2, focal=self.fx, pp=(self.cx, self.cy)
         )
-        return inl1, inl2, R, t
+        return inl1, inl2, R, t, mask_e
 
     def executar(self):
         """Executa o pipeline completo de odometria visual."""
@@ -403,7 +408,7 @@ class OdometriaVisual(MapMatchingMixin):
         t0 = time.time()
 
         # 1. Correspondências (odometria)
-        pts1, pts2, kpt1, kpt2, n_matches, curr_features = self._obter_correspondencias(
+        pts1, pts2, kpt1, kpt2, n_matches, curr_features, confidences = self._obter_correspondencias(
             prev_img, curr_img, prev_features, usar_absoluto=False
         )
         prev_features = curr_features
@@ -418,7 +423,7 @@ class OdometriaVisual(MapMatchingMixin):
             logger.warning("Frame %d: poucos inliers após RANSAC. Pulando.", i)
             return _FrameResult(False, prev_features, yaw_acumulado_est,
                                  dist_est_total, dist_real_total)
-        inl1, inl2, R, t = result_pose
+        inl1, inl2, R, t, mask_e = result_pose
         n_inliers = len(inl1)
 
         # 3. Escala via GSD
@@ -429,11 +434,20 @@ class OdometriaVisual(MapMatchingMixin):
         euler     = Rotation.from_matrix(R).as_euler('zyx', degrees=True)
         yaw_delta = euler[0]
         inlier_ratio = n_inliers / n_matches if n_matches > 0 else 0
+        # Métrica de qualidade do frame: para detectores neurais (que expõem
+        # confiança por match) usa a confiança média dos inliers do RANSAC —
+        # comparável entre LightGlue/LoFTR/MatchFormer. Para detectores
+        # clássicos (sem confiança), mantém inlier_ratio (n_matches já é o
+        # conjunto pós ratio-test, métrica que já funciona bem para eles).
+        if confidences is not None:
+            quality_ok = confidences[mask_e.ravel() == 1].mean() >= self._yaw_min_confidence
+        else:
+            quality_ok = inlier_ratio >= self._yaw_min_inlier_ratio
         # Ignora rotação se: ângulo absurdo nos primeiros frames,
-        # OU taxa de inliers muito baixa (RANSAC divergiu — ver
-        # pipeline.yaw_filter em config.yaml)
+        # OU qualidade do frame baixa (RANSAC divergiu / matches de baixa
+        # confiança — ver pipeline.yaw_filter em config.yaml)
         if (i <= self._yaw_max_initial_frames and abs(yaw_delta) > self._yaw_max_initial_deg) \
-                or inlier_ratio < self._yaw_min_inlier_ratio:
+                or not quality_ok:
             yaw_delta = 0.0
         yaw_acumulado_est = (yaw_acumulado_est - yaw_delta) % 360
 

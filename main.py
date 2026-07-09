@@ -124,6 +124,7 @@ def montar_config(cfg: dict) -> dict:
         "scale_search_step":      mm.get("scale_search_step", 0.05),
         "angle_search_range_deg":  mm.get("angle_search_range_deg", 30.0),
         "angle_search_candidates": mm.get("angle_search_candidates", 5),
+        "angle_estimation_method": mm.get("angle_estimation_method", "grid_search"),
         "map_matching_params":    {
             k: mm[k] for k in ("inlier_thr_position", "inlier_thr_angle_scale")
             if k in mm
@@ -131,6 +132,7 @@ def montar_config(cfg: dict) -> dict:
         "yaw_filter_max_initial_frames":  yaw_filter.get("max_initial_frames", 2),
         "yaw_filter_max_initial_yaw_deg": yaw_filter.get("max_initial_yaw_deg", 45),
         "yaw_filter_min_inlier_ratio":    yaw_filter.get("min_inlier_ratio", 0.10),
+        "yaw_filter_min_confidence":      yaw_filter.get("min_confidence", 0.20),
     }
 
 

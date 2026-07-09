@@ -76,6 +76,7 @@ class MatchResult:
     kpt_count2: int
     match_count: int
     state: object = None   # cache de (kp, des) do frame atual — só ORB/AKAZE usam
+    confidences: "np.ndarray | None" = None  # confiança por match (alinhada a pts1/pts2) — só detectores neurais
 
 
 class FeatureDetector:
@@ -203,7 +204,8 @@ class SuperPointDetector(FeatureDetector):
 
         pts1 = kp1[matches[:, 0]].cpu().numpy()
         pts2 = kp2[matches[:, 1]].cpu().numpy()
-        return MatchResult(pts1, pts2, len(kp1), len(kp2), len(matches), None)
+        confidences = matches01['matching_scores0'][matches[:, 0]].cpu().numpy()
+        return MatchResult(pts1, pts2, len(kp1), len(kp2), len(matches), None, confidences)
 
 
 class LoftrDetector(FeatureDetector):
@@ -227,8 +229,9 @@ class LoftrDetector(FeatureDetector):
             corr = self.mat({'image0': t1, 'image1': t2})
         pts1 = corr['keypoints0'].cpu().numpy()
         pts2 = corr['keypoints1'].cpu().numpy()
+        confidences = corr['confidence'].cpu().numpy()
         n = len(pts1)
-        return MatchResult(pts1, pts2, n, n, n, None)
+        return MatchResult(pts1, pts2, n, n, n, None, confidences)
 
 
 class MatchFormerDetector(FeatureDetector):
@@ -281,8 +284,9 @@ class MatchFormerDetector(FeatureDetector):
             self.mat(data)  # modifica data in-place, não retorna nada
         pts1 = data['mkpts0_f'].cpu().numpy()
         pts2 = data['mkpts1_f'].cpu().numpy()
+        confidences = data['mconf'].cpu().numpy()
         n = len(pts1)
-        return MatchResult(pts1, pts2, n, n, n, None)
+        return MatchResult(pts1, pts2, n, n, n, None, confidences)
 
 
 _REGISTRY = {
