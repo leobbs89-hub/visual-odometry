@@ -7,7 +7,11 @@ tiles NAIP publicamente (`planetary_computer.sign_inplace`). Roda 100% local:
 lê a bounding box (a partir de um CSV de rota ou de coordenadas manuais),
 busca os tiles NAIP que cobrem a área via STAC, baixa as cenas necessárias
 (cache em _naip_cache/ ao lado da saída, para não baixar de novo se rodar
-outra vez) e mosaica recortando na bbox.
+outra vez) e monta um mosaico virtual (.vrt) recortado na bbox, referenciando
+os tiles baixados sem copiar pixels (os tiles NAIP da Planetary Computer já
+vêm como COG — tiled + overviews internas; um merge() monolítico como antes
+jogava essa estrutura fora e deixava as leituras windowed do map matching
+mais lentas do que precisava).
 
 Requisitos (instalar no venv local, NÃO no sandbox):
     pip install pystac-client planetary-computer rasterio
@@ -15,14 +19,14 @@ Requisitos (instalar no venv local, NÃO no sandbox):
 Uso:
     # A partir do CSV de ground truth da rota (colunas Lat, Long)
     python baixar_mapa_naip.py --csv "Coord-Heading-Elev_1500_2.0.csv" \
-        --margem-m 800 --saida "map.tif"
+        --margem-m 800 --saida "map.vrt"
 
     # Ou informando a bounding box manualmente (min_lon min_lat max_lon max_lat)
     python baixar_mapa_naip.py --bbox -105.30 39.98 -105.26 40.02 \
-        --saida "map.tif"
+        --saida "map.vrt"
 
     # Filtrar por ano de aquisição (opcional; padrão = mais recente disponível)
-    python baixar_mapa_naip.py --csv rota.csv --ano 2023 --saida map.tif
+    python baixar_mapa_naip.py --csv rota.csv --ano 2023 --saida map.vrt
 """
 
 import argparse
@@ -32,9 +36,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.merge import merge
 from rasterio.enums import Resampling
 from pyproj import Geod, Transformer
+
+# Mapeamento numpy dtype -> tipo GDAL (usado na VRT escrita à mão abaixo)
+_GDAL_DTYPES = {
+    "uint8": "Byte", "int16": "Int16", "uint16": "UInt16",
+    "int32": "Int32", "uint32": "UInt32", "float32": "Float32", "float64": "Float64",
+}
 
 
 STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
@@ -161,18 +170,109 @@ def baixar_cena(item, pasta_cache):
     return destino
 
 
+def construir_vrt(caminhos_tiles, saida_vrt_path, bounds_recorte=None):
+    """
+    Constrói um mosaico virtual (.vrt) referenciando os tiles originais em
+    vez de copiar/regravar os pixels (como rasterio.merge.merge() fazia).
+
+    Motivação (otimização de carregamento para rotas maiores, ex. 10km):
+    os tiles NAIP baixados via Planetary Computer já vêm como COG (tiled
+    512x512 + overviews internas — confirmado por inspeção) — o antigo
+    map.tif monolítico gerado por merge() jogava fora essa estrutura
+    (virava um GeoTIFF em strips, sem overviews), tornando as leituras
+    windowed de _recortar_roi_mapa() mais lentas que o necessário. A VRT
+    preserva o tiling/overviews de cada fonte, sem duplicar dado nenhum
+    (map.vrt tem alguns KB; os pixels continuam só em _naip_cache/).
+
+    Assume todos os tiles no mesmo CRS/resolução/dtype/nº de bandas (válido
+    aqui: mesmo lote NAIP, mesmo ano, filtrado por buscar_itens_naip). Não
+    depende de gdalbuildvrt/osgeo (indisponíveis neste venv) — escreve o
+    XML da VRT diretamente a partir dos metadados lidos via rasterio.
+    """
+    datasets = [rasterio.open(str(p)) for p in caminhos_tiles]
+    ref = datasets[0]
+    res_x = abs(ref.transform.a)
+    res_y = abs(ref.transform.e)
+    band_count = ref.count
+    gdal_dtype = _GDAL_DTYPES.get(ref.dtypes[0], "Byte")
+
+    minx = min(ds.bounds.left for ds in datasets)
+    maxx = max(ds.bounds.right for ds in datasets)
+    miny = min(ds.bounds.bottom for ds in datasets)
+    maxy = max(ds.bounds.top for ds in datasets)
+    if bounds_recorte is not None:
+        minx = max(minx, bounds_recorte[0])
+        miny = max(miny, bounds_recorte[1])
+        maxx = min(maxx, bounds_recorte[2])
+        maxy = min(maxy, bounds_recorte[3])
+    if minx >= maxx or miny >= maxy:
+        sys.exit(
+            "[erro] Recorte resultou em 0x0 -- a bbox não intersecta os tiles baixados.\n"
+            f"       Bounds dos tiles (CRS nativo): {[ds.bounds for ds in datasets]}\n"
+            f"       Bbox pedida (CRS nativo): {bounds_recorte}"
+        )
+
+    width  = max(1, int(round((maxx - minx) / res_x)))
+    height = max(1, int(round((maxy - miny) / res_y)))
+
+    linhas = [
+        f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">',
+        f'  <SRS>{ref.crs.to_wkt()}</SRS>',
+        f'  <GeoTransform>{minx}, {res_x}, 0.0, {maxy}, 0.0, {-res_y}</GeoTransform>',
+    ]
+    # Ordem de pintura: sources posteriores na lista sobrescrevem as
+    # anteriores nas áreas de sobreposição (comportamento nativo da VRT).
+    # rasterio.merge.merge() (usado antes) tem a semântica oposta --
+    # method='first' faz o PRIMEIRO dataset da lista vencer sobreposições.
+    # Iterar em ordem reversa aqui reproduz essa mesma prioridade (o tile
+    # caminhos_tiles[0] é pintado por último, então "vence").
+    fontes_em_ordem_de_pintura = list(reversed(list(zip(datasets, caminhos_tiles))))
+
+    for b in range(1, band_count + 1):
+        linhas.append(f'  <VRTRasterBand dataType="{gdal_dtype}" band="{b}">')
+        for ds, path in fontes_em_ordem_de_pintura:
+            tb = ds.bounds
+            ov_minx, ov_maxx = max(tb.left, minx), min(tb.right, maxx)
+            ov_miny, ov_maxy = max(tb.bottom, miny), min(tb.top, maxy)
+            if ov_minx >= ov_maxx or ov_miny >= ov_maxy:
+                continue  # este tile não intersecta a extensão de saída
+            src_x_off = int(round((ov_minx - tb.left) / res_x))
+            src_y_off = int(round((tb.top - ov_maxy) / res_y))
+            src_w = max(1, int(round((ov_maxx - ov_minx) / res_x)))
+            src_h = max(1, int(round((ov_maxy - ov_miny) / res_y)))
+            dst_x_off = int(round((ov_minx - minx) / res_x))
+            dst_y_off = int(round((maxy - ov_maxy) / res_y))
+            linhas.append('    <SimpleSource>')
+            linhas.append(f'      <SourceFilename relativeToVRT="0">{Path(path).resolve()}</SourceFilename>')
+            linhas.append(f'      <SourceBand>{b}</SourceBand>')
+            linhas.append(f'      <SrcRect xOff="{src_x_off}" yOff="{src_y_off}" xSize="{src_w}" ySize="{src_h}"/>')
+            linhas.append(f'      <DstRect xOff="{dst_x_off}" yOff="{dst_y_off}" xSize="{src_w}" ySize="{src_h}"/>')
+            linhas.append('    </SimpleSource>')
+        linhas.append('  </VRTRasterBand>')
+    linhas.append('</VRTDataset>')
+
+    for ds in datasets:
+        ds.close()
+
+    Path(saida_vrt_path).write_text("\n".join(linhas), encoding="utf-8")
+
+
 def mosaicar_e_salvar(itens, bbox, saida_path):
-    """Baixa as cenas localmente e mosaica, recortando na bbox."""
+    """
+    Baixa as cenas localmente e monta a VRT recortada na bbox (em vez de
+    copiar os pixels num GeoTIFF monolítico — ver construir_vrt()).
+    """
     pasta_cache = Path(saida_path).parent / "_naip_cache"
     pasta_cache.mkdir(parents=True, exist_ok=True)
 
     caminhos_locais = [baixar_cena(it, pasta_cache) for it in itens]
-    datasets = [rasterio.open(str(p)) for p in caminhos_locais]
+
+    with rasterio.open(str(caminhos_locais[0])) as ds0:
+        raster_crs = ds0.crs
 
     # bbox chega em WGS84 (graus); os tiles NAIP costumam vir em CRS projetado
     # (UTM, metros) -- reprojeta a bbox pro CRS do raster antes de recortar,
-    # senão merge(bounds=...) não acha interseção nenhuma (0x0).
-    raster_crs = datasets[0].crs
+    # senão a VRT não acha interseção nenhuma (0x0).
     if raster_crs and not raster_crs.is_geographic:
         transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
         min_x, min_y = transformer.transform(bbox[0], bbox[1])
@@ -182,40 +282,21 @@ def mosaicar_e_salvar(itens, bbox, saida_path):
     else:
         bounds_raster = bbox
 
-    print("[info] Mosaicando...")
-    mosaico, transform = merge(
-        datasets,
-        bounds=bounds_raster,
-        resampling=Resampling.bilinear,
-    )
+    print("[info] Construindo mosaico virtual (VRT) sobre os tiles originais (COG)...")
+    construir_vrt(caminhos_locais, saida_path, bounds_recorte=bounds_raster)
 
-    if mosaico.shape[1] == 0 or mosaico.shape[2] == 0:
-        sys.exit(
-            "[erro] Recorte resultou em 0x0 -- a bbox não intersecta os tiles baixados.\n"
-            f"       Bounds dos tiles (CRS nativo): {[ds.bounds for ds in datasets]}\n"
-            f"       Bbox pedida (CRS nativo): {bounds_raster}"
-        )
+    print("[info] Adicionando overviews à VRT (facilita buscas de ROI grandes)...")
+    with rasterio.open(saida_path, "r+") as vrt_ds:
+        vrt_ds.build_overviews([2, 4, 8, 16, 32], Resampling.average)
+        vrt_ds.update_tags(ns="rio_overview", resampling="average")
+        largura, altura = vrt_ds.width, vrt_ds.height
+        crs, transform = vrt_ds.crs, vrt_ds.transform
 
-    perfil = datasets[0].profile.copy()
-    perfil.update(
-        driver="GTiff",
-        height=mosaico.shape[1],
-        width=mosaico.shape[2],
-        count=mosaico.shape[0],
-        transform=transform,
-        compress="deflate",
-    )
-
-    with rasterio.open(saida_path, "w", **perfil) as dst:
-        dst.write(mosaico)
-
-    for ds in datasets:
-        ds.close()
-
-    print(f"[ok] Mapa salvo em: {saida_path}")
-    print(f"     Dimensões: {mosaico.shape[2]}x{mosaico.shape[1]} px, {mosaico.shape[0]} banda(s)")
-    print(f"     CRS: {perfil['crs']}")
+    print(f"[ok] Mapa (VRT) salvo em: {saida_path}")
+    print(f"     Dimensões: {largura}x{altura} px")
+    print(f"     CRS: {crs}")
     print(f"     Resolução: {abs(transform.a):.3f} (unidade do CRS)/px")
+    print(f"     Tiles referenciados (não copiados): {len(caminhos_locais)}")
 
 
 def main():
@@ -227,7 +308,7 @@ def main():
     parser.add_argument("--margem-m", type=float, default=800.0,
                          help="Margem extra ao redor da rota em metros (default: 800m — cobre roi_size_m=1000 do map_matching com folga)")
     parser.add_argument("--ano", type=int, default=None, help="Filtrar por ano de aquisição NAIP (default: mais recente disponível)")
-    parser.add_argument("--saida", default="map.tif", help="Caminho do GeoTIFF de saída")
+    parser.add_argument("--saida", default="map.vrt", help="Caminho da VRT de saída (mosaico virtual, não copia pixels)")
     args = parser.parse_args()
 
     if args.csv:

@@ -119,8 +119,11 @@ def montar_config(cfg: dict) -> dict:
         "use_map_matching":   mm.get("enabled", False),
         "map_match_interval": mm.get("interval", 1),
         "roi_margin_factor":  mm.get("roi_margin_factor", 1.3),
+        "roi_center_mode":    mm.get("roi_center_mode", "estimado"),
         "absolute_detector_type": mm.get("absolute_detector", cfg["detector"]),
         "scale_search_step":      mm.get("scale_search_step", 0.05),
+        "angle_search_range_deg":  mm.get("angle_search_range_deg", 30.0),
+        "angle_search_candidates": mm.get("angle_search_candidates", 5),
         "map_matching_params":    {
             k: mm[k] for k in ("inlier_thr_position", "inlier_thr_angle_scale")
             if k in mm

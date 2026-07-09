@@ -73,6 +73,7 @@ class MapMatchingMixin:
     Atributos esperados na classe hospedeira (definidos em __init__):
         self.config, self.map_dataset, self._map_transformer,
         self.roi_margin_factor, self.escala_atual, self.scale_search_step,
+        self.angle_search_range_deg, self.angle_search_candidates,
         self.inlier_thr_position, self.inlier_thr_angle_scale,
         self.fx, self.cx  (para _inicializar_escala)
 
@@ -138,21 +139,36 @@ class MapMatchingMixin:
     # Preparação do patch satelital
     # ------------------------------------------------------------------
 
-    def _recortar_roi_mapa(self, lat, lon, margem_extra=1.5):
-        """
-        Recorta um patch do GeoTIFF centrado na posição estimada (lat/lon).
-        O parâmetro margem_extra amplia a ROI para acomodar rotação posterior.
-        """
-        half = (self.roi_size_m * margem_extra) / 2.0
+    def _bbox_ao_redor(self, lat, lon, half):
+        """Bbox geodésica (minx, miny, maxx, maxy) de lado 2*half (m) centrada em (lat, lon)."""
         p_min_lat = distance(meters=half).destination((lat, lon), bearing=180)
         p_min_lon = distance(meters=half).destination((lat, lon), bearing=270)
         p_max_lon = distance(meters=half).destination((lat, lon), bearing=90)
         p_max_lat = distance(meters=half).destination((lat, lon), bearing=0)
+        return (p_min_lon.longitude, p_min_lat.latitude,
+                p_max_lon.longitude, p_max_lat.latitude)
 
-        minx = p_min_lon.longitude
-        miny = p_min_lat.latitude
-        maxx = p_max_lon.longitude
-        maxy = p_max_lat.latitude
+    def _recortar_roi_mapa(self, lat, lon, margem_extra=1.5, lat_real=None, lon_real=None):
+        """
+        Recorta um patch do GeoTIFF centrado na posição estimada (lat/lon).
+        O parâmetro margem_extra amplia a ROI para acomodar rotação posterior.
+
+        Se (lat_real, lon_real) for informado (modo diagnóstico
+        roi_center_mode='real_bbox'), a ROI passa a ser a menor bbox que
+        contém tanto a posição estimada quanto a real, cada uma com a
+        margem normal ao redor — em vez de uma bbox de raio fixo em torno
+        de um único ponto. Isso garante que a posição real esteja sempre
+        dentro do recorte pesquisado, independente da deriva acumulada do
+        dead-reckoning; usado apenas para isolar a qualidade do
+        matching/correção do problema de "onde procurar" sem GPS.
+        """
+        half = (self.roi_size_m * margem_extra) / 2.0
+        minx, miny, maxx, maxy = self._bbox_ao_redor(lat, lon, half)
+
+        if lat_real is not None and lon_real is not None:
+            minx2, miny2, maxx2, maxy2 = self._bbox_ao_redor(lat_real, lon_real, half)
+            minx, miny = min(minx, minx2), min(miny, miny2)
+            maxx, maxy = max(maxx, maxx2), max(maxy, maxy2)
 
         if self._map_transformer is not None:
             minx, miny = self._map_transformer.transform(minx, miny)
@@ -187,7 +203,8 @@ class MapMatchingMixin:
             patch_8u = np.zeros_like(patch, dtype=np.uint8)
         return patch_8u, patch_transform
 
-    def _preparar_patch_satelital(self, lat, lon, angulo_graus, escala, gsd_voo=None):
+    def _preparar_patch_satelital(self, lat, lon, angulo_graus, escala, gsd_voo=None,
+                                   lat_real=None, lon_real=None):
         """
         Prepara patch satelital para comparação (Seção 3.2.3 da dissertação):
         1. Recorta patch maior com margem (_recortar_roi_mapa)
@@ -209,7 +226,9 @@ class MapMatchingMixin:
         gsd_voo = gsd_voo if gsd_voo is not None else self.gsd_voo_efetivo
 
         # 1. Recortar com margem
-        patch_big, T_big = self._recortar_roi_mapa(lat, lon, margem_extra=1.5)
+        patch_big, T_big = self._recortar_roi_mapa(
+            lat, lon, margem_extra=1.5, lat_real=lat_real, lon_real=lon_real
+        )
 
         # 2. Reamostrar para casar a resolução do crop com o GSD do voo
         h_big, w_big = patch_big.shape[:2]
@@ -290,7 +309,7 @@ class MapMatchingMixin:
     # ------------------------------------------------------------------
 
     def _busca_escala(self, img_aerea, lat, lon, angulo_graus,
-                              escala_anterior):
+                              escala_anterior, lat_real=None, lon_real=None):
         """
         Testa 3 escalas candidatas e retorna a que produz mais inliers
         (Seção 3.2.3 da dissertação).
@@ -309,7 +328,7 @@ class MapMatchingMixin:
         melhor = None
         for escala in candidatas:
             patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
-                lat, lon, angulo_graus, escala
+                lat, lon, angulo_graus, escala, lat_real=lat_real, lon_real=lon_real
             )
             pts1, pts2, _, _, _, _ = self._obter_correspondencias(
                 img_aerea, patch, usar_absoluto=True
@@ -328,9 +347,76 @@ class MapMatchingMixin:
 
         if melhor is None:
             patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
-                lat, lon, angulo_graus, escala_anterior
+                lat, lon, angulo_graus, escala_anterior, lat_real=lat_real, lon_real=lon_real
             )
             return (patch, escala_anterior, np.array([]), np.array([]),
+                    0, T, M_rot_inv, shape_orig)
+
+        return melhor
+
+    # ------------------------------------------------------------------
+    # Busca de ângulo
+    # ------------------------------------------------------------------
+
+    def _busca_angulo(self, img_aerea, lat, lon, angulo_base, escala,
+                       lat_real=None, lon_real=None):
+        """
+        Testa candidatos de ÂNGULO (não só escala) e retorna o que produz
+        mais inliers — mesmo padrão de _busca_escala, mas para o ângulo.
+
+        Motivação (2026-07-08, achado da investigação do "runaway"): o
+        ângulo usado pra rotacionar o patch satelital vinha sempre fixo do
+        yaw acumulado da odometria (sem suavização), que fica justamente
+        mais ruidoso em curvas (matriz essencial mal condicionada). Sem
+        nenhuma busca própria de ângulo, um yaw ruidoso numa curva
+        rotacionava o patch errado, derrubava os inliers abaixo do limiar,
+        e como a única correção de yaw existente depende de um match já
+        bem-sucedido, o erro nunca era corrigido — persistindo e compondo
+        nos frames seguintes. Testar um bracket largo de ângulos ao redor
+        do yaw estimado permite recuperar o match mesmo quando o yaw da
+        odometria está bem errado.
+
+        candidatos = angulo_base + offset, para offset uniformemente
+        espaçado em ±self.angle_search_range_deg
+        (self.angle_search_candidates valores, incluindo offset=0).
+
+        Returns:
+            (patch_otimo, angulo_otimo, pts1_inliers, pts2_inliers,
+             n_inliers, patch_transform, M_rot_inv, shape_orig)
+        """
+        n = max(1, self.angle_search_candidates)
+        alcance = self.angle_search_range_deg
+        if n == 1:
+            offsets = [0.0]
+        else:
+            offsets = list(np.linspace(-alcance, alcance, n))
+
+        melhor = None
+        for offset in offsets:
+            angulo = angulo_base + offset
+            patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
+                lat, lon, angulo, escala, lat_real=lat_real, lon_real=lon_real
+            )
+            pts1, pts2, _, _, _, _ = self._obter_correspondencias(
+                img_aerea, patch, usar_absoluto=True
+            )
+            if pts1 is None or len(pts1) < 4:
+                continue
+            _, mask = cv.findHomography(pts1, pts2, cv.RANSAC, 5.0)
+            if mask is None:
+                continue
+            n_inliers = int(np.sum(mask))
+            if melhor is None or n_inliers > melhor[4]:
+                pts1_inl = pts1[mask.ravel() == 1]
+                pts2_inl = pts2[mask.ravel() == 1]
+                melhor = (patch, angulo, pts1_inl, pts2_inl,
+                          n_inliers, T, M_rot_inv, shape_orig)
+
+        if melhor is None:
+            patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
+                lat, lon, angulo_base, escala, lat_real=lat_real, lon_real=lon_real
+            )
+            return (patch, angulo_base, np.array([]), np.array([]),
                     0, T, M_rot_inv, shape_orig)
 
         return melhor
@@ -393,19 +479,39 @@ class MapMatchingMixin:
     # ------------------------------------------------------------------
 
     def _corrigir_posicao_pelo_mapa(self, curr_img, lat_est, lon_est,
-                                     yaw_acumulado, i):
+                                     yaw_acumulado, i, lat_real=None, lon_real=None):
         """
         Módulo de Localização Absoluta (Seção 3.2.3 da dissertação).
         Retorna (lat, lon, yaw, escala, n_inliers, map_ok).
+
+        (lat_real, lon_real): ver docstring de _recortar_roi_mapa — só usado
+        quando roi_center_mode='real_bbox' (modo diagnóstico).
         """
         TARGET = _MAP_MATCH_TARGET_PX
         h, w = curr_img.shape[:2]
         img_aerea = cv.resize(curr_img, (TARGET, TARGET)) if (h != TARGET or w != TARGET) else curr_img
 
+        # Etapa 1: busca de ÂNGULO (escala fixa em escala_atual) — encontra
+        # um ângulo validado por inliers antes de refinar a escala. Ver
+        # docstring de _busca_angulo para a motivação (fix do "runaway").
+        (_, angulo_otimo, _, _,
+         n_inliers_ang, _, _, _) = self._busca_angulo(
+            img_aerea, lat_est, lon_est, yaw_acumulado, self.escala_atual,
+            lat_real=lat_real, lon_real=lon_real
+        )
+        logger.debug(
+            "Frame %d: busca de ângulo escolheu %.1f° (base yaw=%.1f°, "
+            "offset=%.1f°, inliers=%d)",
+            i, angulo_otimo, yaw_acumulado, angulo_otimo - yaw_acumulado, n_inliers_ang
+        )
+
+        # Etapa 2: busca de ESCALA, agora usando o ângulo validado da etapa 1
+        # (em vez do yaw cru da odometria) como base de rotação do patch.
         (patch_otimo, escala_otima, pts1, pts2,
          n_inliers, patch_transform, M_rot_inv,
          shape_orig) = self._busca_escala(
-            img_aerea, lat_est, lon_est, yaw_acumulado, self.escala_atual
+            img_aerea, lat_est, lon_est, angulo_otimo, self.escala_atual,
+            lat_real=lat_real, lon_real=lon_real
         )
 
         # Armazena sempre para debug, independente do resultado
@@ -421,13 +527,19 @@ class MapMatchingMixin:
             return lat_est, lon_est, yaw_acumulado, self.escala_atual, n_inliers, False
 
         lat_corr, lon_corr = pos
-        novo_yaw  = yaw_acumulado
+        # angulo_otimo já é um ângulo validado por inliers (n_inliers >=
+        # inlier_thr_position aqui) — substitui yaw_acumulado como base do
+        # yaw retornado mesmo sem o refinamento fino da homografia abaixo.
+        # Isso quebra o loop causal do "runaway": mesmo um match "só ok"
+        # já puxa o yaw de volta pra perto do correto, em vez de deixá-lo
+        # preso no valor ruidoso vindo da odometria.
+        novo_yaw    = angulo_otimo % 360
         nova_escala = self.escala_atual
 
         if n_inliers >= self.inlier_thr_angle_scale:
             H_final, _ = cv.findHomography(pts1, pts2, cv.RANSAC, 5.0)
             delta_ang = self._extrair_angulo_da_homografia(H_final)
-            novo_yaw    = (yaw_acumulado + delta_ang) % 360
+            novo_yaw    = (angulo_otimo + delta_ang) % 360
             nova_escala = escala_otima
 
         self._last_map_match_data = (img_aerea, patch_otimo, pts1, pts2, n_inliers)

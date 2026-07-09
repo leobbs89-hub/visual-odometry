@@ -83,6 +83,26 @@ class OdometriaVisual(MapMatchingMixin):
             # incompatível com o GSD real do voo em outro dataset/altitude).
             self.roi_margin_factor  = config.get('roi_margin_factor', 1.3)
             self.scale_search_step  = config.get('scale_search_step', 0.05)
+            # Busca de ângulo (fix do "runaway", 2026-07-08): bracket largo
+            # em torno do yaw da odometria, testado ANTES da busca de
+            # escala — ver map_matching.py::_busca_angulo.
+            self.angle_search_range_deg  = config.get('angle_search_range_deg', 30.0)
+            self.angle_search_candidates = config.get('angle_search_candidates', 5)
+            # roi_center_mode='real_bbox' é um modo DIAGNÓSTICO: usa a
+            # coordenada real (GT) só para centralizar/dimensionar a ROI de
+            # busca (garantindo que a posição real esteja sempre dentro do
+            # recorte pesquisado), nunca para a correção em si. Serve para
+            # isolar a qualidade do matching do problema de "onde procurar"
+            # sem GPS — não representa um cenário realista de voo sem GPS.
+            self.roi_center_mode = config.get('roi_center_mode', 'estimado')
+            if self.roi_center_mode == 'real_bbox':
+                logger.warning(
+                    "roi_center_mode='real_bbox' ativo — modo DIAGNÓSTICO que "
+                    "usa a coordenada real (GT) para centralizar a ROI de "
+                    "busca do map matching. Não representa um cenário "
+                    "realista de voo sem GPS; use apenas para isolar a "
+                    "qualidade do matching do problema de busca."
+                )
 
             mm_params = config.get('map_matching_params', {})
             default_thr = _INLIER_THRESHOLDS.get(
@@ -428,12 +448,17 @@ class OdometriaVisual(MapMatchingMixin):
         lat_antes_corr, lon_antes_corr = est_lat, est_lon
         ran_map_matching = self.use_map_matching and (i % self.map_match_interval == 0)
         if ran_map_matching:
+            lat_real_roi = lon_real_roi = None
+            if self.roi_center_mode == 'real_bbox':
+                lat_real_roi = self.lat_real_list[i + 1]
+                lon_real_roi = self.lon_real_list[i + 1]
             (est_lat, est_lon,
              yaw_acumulado_est,
              self.escala_atual,
              n_inliers_map,
              map_ok) = self._corrigir_posicao_pelo_mapa(
-                curr_img, est_lat, est_lon, yaw_acumulado_est, i
+                curr_img, est_lat, est_lon, yaw_acumulado_est, i,
+                lat_real=lat_real_roi, lon_real=lon_real_roi
             )
 
         if map_ok:

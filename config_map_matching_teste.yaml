@@ -1,0 +1,113 @@
+# ============================================================
+# config_map_matching_teste.yaml — Teste de Map Matching
+# Rota: Tese/Imagens/1500_05_TIF  |  Mapa base: Imagens INPE/SJC.tif
+# ============================================================
+
+paths:
+  base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/MESTRADO/Tese/Imagens/1500_05_TIF"
+  map_tif:        "C:/Users/bbs_l/OneDrive/Leandro/ITA/MESTRADO/Tese/Imagens/Imagens INPE/SJC.tif"
+  images:         "Resized"
+  ground_truth:   "Coord-Heading-Elev_1500_0.5.csv"
+  output:         "C:/Users/bbs_l/OneDrive/Leandro/ITA/MESTRADO/CODIGOS/visual-odometry/results/map_matching_teste"
+
+# --- Câmera ---
+camera:
+  width:  640
+  height: 640
+  h_fov:  60
+  v_fov:  60
+
+# --- Detector de odometria quadro-a-quadro ---
+detector: ORB
+
+# --- Dispositivo para detectores neurais ---
+device: auto
+
+# --- Parâmetros por detector ---
+detector_params:
+  orb:
+    nfeatures:      1500
+    scaleFactor:    1.2
+    nlevels:        8
+    edgeThreshold:  31
+    firstLevel:     0
+    WTA_K:          2
+    scoreType:      HARRIS
+    patchSize:      31
+
+  akaze:
+    descriptor_type:     MLDB
+    descriptor_size:     0
+    descriptor_channels: 3
+    threshold:           0.0001
+    nOctaves:            4
+    nOctaveLayers:       4
+    diffusivity:         PM_G2
+
+  sift:
+    nfeatures:          3000
+    nOctaveLayers:       3
+    contrastThreshold:   0.04
+    edgeThreshold:       10
+    sigma:                1.6
+
+  superpoint:
+    max_num_keypoints: 800
+
+  loftr:
+    pretrained: outdoor
+
+  matchformer:
+    backbone_type: largela
+    ckpt_path: "MatchFormer/weights/outdoor-large-LA.ckpt"
+    resolution: [8, 2]
+    fine_window_size: 5
+    fine_concat_coarse_feat: true
+    coarse:
+      d_model: 256
+      d_ffn:   256
+    fine:
+      d_model: 128
+      d_ffn:   128
+    match_coarse:
+      thr:                    0.2
+      border_rm:              0
+      match_type:             dual_softmax
+      dsmax_temperature:      0.1
+      train_coarse_percent:   0.2
+      train_pad_num_gt_min:   200
+
+# --- Correspondências (ORB / AKAZE) ---
+matcher:
+  nn_match_ratio: 0.8
+
+# --- Map Matching ---
+map_matching:
+  enabled:   true
+
+  absolute_detector: MATCHFORMER
+
+  interval:  1
+  roi_size_m: 1000
+
+  scale_search_step: 0.05
+
+  # Reduzidos do padrão (16, 20) para diagnosticar se o matching está perto
+  # do limiar ou muito longe (conteúdo satélite real x cena simulada)
+  inlier_thr_position:    6
+  inlier_thr_angle_scale: 10
+
+# --- Parâmetros internos do pipeline ---
+pipeline:
+  yaw_filter:
+    max_initial_frames:  2
+    max_initial_yaw_deg: 45
+    min_inlier_ratio:    0.10
+
+# --- Visualização e Logs ---
+display:
+  show_plot:          false
+  show_images:        false
+  print_console:      true
+  show_map_matching:  true
+  debug_map_matching: false

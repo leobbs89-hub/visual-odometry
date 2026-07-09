@@ -10,7 +10,7 @@ paths:
   # Apontando para o teste de Map Matching com mapa base NAIP (rota CHAMPAIGN).
   # Scripts de geração/download ficam em map_matching_naip/ (ver README lá).
   base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/MESTRADO/Tese/rotas_quadradas/CHAMPAIGN/mach_1.0"
-  map_tif:        "../map.tif"                        # compartilhado entre os machs, um nível acima
+  map_tif:        "../map.vrt"                         # VRT sobre os tiles NAIP originais (COG) — ver map_matching_naip/baixar_mapa_naip.py
   images:         "frames/Resized"
   ground_truth:   "Coord-Heading-Elev_1500_1.0.csv"
   output:         "results"                   # relativo a base_path
@@ -114,8 +114,25 @@ map_matching:
   # preencher o patch de 480px (tolerância a deriva de posição do dead-reckoning).
   roi_margin_factor: 1.3
 
+  # Modo DIAGNÓSTICO (2026-07-08): "estimado" (default) recorta a ROI em
+  # torno da posição estimada, como sempre. "real_bbox" usa também a
+  # coordenada real (GT) para garantir que ela esteja sempre dentro do
+  # recorte pesquisado (evita o efeito "runaway" documentado em
+  # map_matching_naip/CLAUDE.md) — não representa um cenário realista de
+  # voo sem GPS, serve só para isolar a qualidade do matching do problema
+  # de "onde procurar".
+  # roi_center_mode: estimado
+
   # Fator de variação na busca gulosa de escala (±5% por padrão)
   scale_search_step: 0.05
+
+  # Busca de ÂNGULO (fix do "runaway", 2026-07-08): antes de refinar a
+  # escala, testa candidatos de ângulo ao redor do yaw estimado pela
+  # odometria (que não tem suavização e fica ruidoso em curvas) e escolhe
+  # o que der mais inliers. Ver map_matching_naip/CLAUDE.md para o
+  # diagnóstico completo.
+  angle_search_range_deg: 30.0    # bracket: yaw_estimado ± este valor
+  angle_search_candidates: 5      # nº de candidatos no bracket (inclui offset=0)
 
   # Limiares mínimos de inliers (Tabela 3.1 da dissertação)
   # Se comentados, usa os valores padrão por descritor definidos no código

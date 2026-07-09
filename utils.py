@@ -103,7 +103,13 @@ def interpolar_waypoints(waypoints, speed_ms, fps=1, altitude=1500):
     step = 1.0 / fps
 
     total_time = sum(wp["duration"] for wp in waypoints)
-    timestamps = np.arange(0.0, total_time + step, step)
+    # Exclusive de total_time: total_time quase nunca é múltiplo exato de
+    # step (vem de distância/velocidade real), então um limite superior
+    # inclusive (total_time + step) sempre gera uma amostra "fantasma" além
+    # do fim real do voo -- o Google Earth nunca chega a capturar um frame
+    # nesse instante (o tour já terminou), sobrando uma linha a mais no CSV
+    # sem imagem correspondente.
+    timestamps = np.arange(0.0, total_time, step)
     n          = len(timestamps)
 
     file_list = [f"-{i:06d}.png" for i in range(1, n + 1)]
