@@ -143,6 +143,7 @@ class OdometriaVisual(MapMatchingMixin):
         self._yaw_max_initial_deg     = config.get('yaw_filter_max_initial_yaw_deg', 45)
         self._yaw_min_inlier_ratio    = config.get('yaw_filter_min_inlier_ratio', 0.10)
         self._yaw_min_confidence      = config.get('yaw_filter_min_confidence', 0.2)
+        self._first_step_gps_seed    = config.get('first_step_gps_seed', True)
 
         self._inicializar_detector_odometria()
 
@@ -428,7 +429,22 @@ class OdometriaVisual(MapMatchingMixin):
 
         # 3. Escala via GSD
         dist_est_atual  = self._calcula_deslocamento_escala(inl1, inl2, self.gsd_list[i])
-        dist_est_total += dist_est_atual
+
+        # Semente por GPS do primeiro passo (i=0): ver pipeline.first_step_gps_seed
+        # em config.yaml — o conteúdo capturado de "-000002.png" (i=1) reflete
+        # sistematicamente ~2s de voo, não 1s, fazendo dist_est_atual sair
+        # ~2,00× a distância real só nesse passo. dist_est_atual continua sendo
+        # registrado no CSV como diagnóstico (valor bruto); só a distância usada
+        # para acumular a posição é substituída aqui.
+        gps_seed_aplicada = self._first_step_gps_seed and i == 0
+        if gps_seed_aplicada:
+            dist_est_usada = self.calcula_distancia_latlon(
+                self.lat_real_list[i],     self.lon_real_list[i],
+                self.lat_real_list[i + 1], self.lon_real_list[i + 1],
+            )
+        else:
+            dist_est_usada = dist_est_atual
+        dist_est_total += dist_est_usada
 
         # 4. Yaw acumulado
         euler     = Rotation.from_matrix(R).as_euler('zyx', degrees=True)
@@ -453,7 +469,7 @@ class OdometriaVisual(MapMatchingMixin):
 
         # 5. Nova posição estimada
         est_lat, est_lon = self.estima_latlon(
-            lat_est_list[-1], lon_est_list[-1], yaw_acumulado_est, dist_est_atual
+            lat_est_list[-1], lon_est_list[-1], yaw_acumulado_est, dist_est_usada
         )
 
         # 6. Correção por map matching (opcional)
@@ -507,6 +523,7 @@ class OdometriaVisual(MapMatchingMixin):
             "IMG": i, "KPT1": kpt1, "KPT2": kpt2,
             "MATCHES": n_matches, "INLIERS": n_inliers,
             "DIST_REAL": dist_real_atual, "DIST_EST": dist_est_atual,
+            "GPS_SEED": gps_seed_aplicada,
             "ERRO_ACUM(m)": erro_acum, "TEMPO(s)": elapsed,
             "MAP_OK": map_ok,
         })

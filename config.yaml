@@ -153,6 +153,23 @@ pipeline:
     min_inlier_ratio:    0.10
     min_confidence:      0.20
 
+  # Semear a distância do primeiro par de frames (i=0) com o valor real
+  # (GPS) em vez do valor estimado visualmente. Motivo: bug confirmado
+  # 2026-07-12 — a captura manual do tour no Google Earth Pro introduz um
+  # atraso de ~1s logo no início de toda rota (a "leg 0", entre o waypoint
+  # de bounce e o primeiro waypoint real, sempre reta e de velocidade
+  # constante), fazendo o CONTEÚDO de "-000002.png" (rotulado t=1s no CSV)
+  # corresponder fisicamente à posição da câmera em t≈2s. Isso faz
+  # DIST_EST(IMG=0) sair sistematicamente ~2,00× DIST_REAL(IMG=0) em todos
+  # os detectores e rotas testados (ver
+  # Tese/investigacao_bug_distancia_dobrada_frame_inicial.md e
+  # Tese/validar_hipotese_captura_atrasada.py), o que se propaga como um
+  # deslocamento de ~1 perna ao longo de toda a trajetória estimada
+  # (dead-reckoning puro). Como a direção (yaw) já é filtrada pelo
+  # yaw_filter acima e não está corrompida, corrigir só a distância desse
+  # passo específico elimina o viés sem precisar recapturar as imagens.
+  first_step_gps_seed: true
+
 # --- Visualização e Logs ---
 display:
   show_plot:          true    # gráfico de trajetória em tempo real
