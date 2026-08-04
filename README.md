@@ -214,6 +214,40 @@ Parâmetros principais no topo do arquivo:
 A velocidade do som é calculada automaticamente pela biblioteca `ambiance` (modelo ICAO)
 para a altitude configurada.
 
+### Convenção de captura no Google Earth Pro
+
+Os frames são gravados manualmente pelo Movie Maker do Google Earth Pro a partir do
+`KML_tour`. A captura tem duas particularidades que **não são opcionais** — ignorá-las
+introduz erro sistemático de georreferência de centenas de metros, invisível nas
+métricas usuais:
+
+**1. O recorte tem de ser centrado no nadir.** O viewport gravado é 640×700 e o ponto
+principal (a coordenada do CSV, com `tilt=0`) fica na linha 350 — o centro do viewport,
+não o centro de um corte pelo topo. Duas faixas de legenda ocupam as linhas 641–653
+(atribuição) e 681–692 (marca d'água), o que limita o recorte centrado a 582 px de lado;
+usamos **576** (maior múltiplo de 32 que cabe, exigência de divisibilidade por 8 do
+LoFTR/MatchFormer). `utils.recortar_frame_google_earth()` faz isso e levanta `ValueError`
+se o frame não tiver as dimensões esperadas.
+
+`fx` **não** depende do recorte (554,2563 px, propriedade da renderização); o que muda é
+o FOV coberto pelos pixels restantes. Use `utils.camera_do_recorte()` para obter o bloco
+`camera` coerente em vez de repetir os números.
+
+**2. O índice do arquivo é o segundo de voo, a partir de `-000002.png`.** O Movie Maker
+grava o render de `t=0` duas vezes (`-000000.png` e `-000001.png` saem byte-idênticos) e
+**nunca salva o frame de `t=1`**. Por isso `interpolar_waypoints()` nomeia cada amostra
+pelo segundo de voo e `recortar_para_dataset()` descarta as duas primeiras — o dataset
+começa em `t=2`, com espaçamento uniforme. O tour KML continua sendo gerado da rota
+completa: o voo tem de começar em `t=0`.
+
+> **Ao mudar a resolução de captura, remeça.** As constantes em `utils.py`
+> (`FRAME_BRUTO_GE`, `LEGENDA_TOPO_Y`, `FRAME_RECORTE_PX`, `GE_PRIMEIRO_FRAME_VALIDO`)
+> foram medidas na janela 640×700. Os scripts em `map_matching_naip/` fazem essa medição
+> a partir de poucos frames de teste, correlacionando contra um mapa base georreferenciado:
+> `identificar_linha_do_frame.py` (a qual linha do CSV cada bruto corresponde),
+> `varredura_lag_captura.py` (lag em frames) e `comparar_fontes_satelite.py`
+> (centragem e concordância entre fontes de satélite).
+
 ---
 
 ## Dependências
