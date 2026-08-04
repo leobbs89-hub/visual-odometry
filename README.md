@@ -198,7 +198,7 @@ Saídas geradas em `OUTPUT_DIR` (configurável no topo do script):
 | `Coord-Heading-Elev_<ALT>_<MACH>.csv` | Ground truth simulado (Lat, Long, Proa, Altura) |
 | `KML_tour_<ALT>_<MACH>.kml` | Tour animado para Google Earth (`gx:Tour`) |
 | `KML_path_<ALT>_<MACH>.kml` | Pontos da rota como Placemarks |
-| `Resized/` | Imagens cortadas para a largura do sensor (`SENSOR_PX`) |
+| `Resized/` | Recorte quadrado centrado no nadir, sem legenda (`utils.recortar_frame_google_earth`) |
 
 Parâmetros principais no topo do arquivo:
 

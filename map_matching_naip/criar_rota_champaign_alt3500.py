@@ -1,34 +1,56 @@
 """
-Geração de rota quadrada simulada para testes de odometria visual.
+Geração da rota quadrada CHAMPAIGN_ALT3500 (teste de Map Matching com mapa
+base Sentinel-2, simulando uma rota de altitude maior / resolução menor).
 
-Produz: waypoints geodésicos com curvas suaves de 90°, CSV com coordenadas
-interpoladas, KML Tour e KML de pontos para visualização no Google Earth.
+Cópia de criar_rota_champaign.py com ALTITUDE=3500 (era 1500) e BASE_ROTA
+apontando para uma pasta separada, para não sobrescrever a rota original de
+1500m (CHAMPAIGN/) nem a de 6km (CHAMPAIGN_GRANDE/). Mesma localização
+(SQUARE_START idêntico) e mesmo lado de 2.2km -- só a altitude muda.
+
+GSD do voo a 3500m: ~7.1 m/px (vs ~3.06 m/px a 1500m) -- mais grosseiro que
+a resolução nativa do NAIP (0.3m/px) usado nos testes anteriores, mas ainda
+mais fino que o Sentinel-2 (10m/px) que será usado como mapa base aqui
+(ver baixar_mapa_sentinel2.py).
+
+IMPORTANTE — Conferir no Google Earth antes de gravar o voo completo:
+    1. Rode este script para gerar o KML_tour.
+    2. Abra o KML_tour no Google Earth Pro e veja se o quadrado cai numa
+       área com boa mistura de textura (ruas, quarteirões, talhões).
+
+Fluxo depois deste script (mesmo processo manual já usado em CHAMPAIGN/CHAMPAIGN_GRANDE):
+    1. Rodar este script -> gera CSV + KML em mach_X/.
+    2. Abrir KML_tour_*.kml no Google Earth Pro, gravar o voo (frames em
+       mach_X/frames/, mesmo nome de padrão dos outros PNGs).
+    3. Rodar este script de novo (ou só a etapa de resize) para gerar
+       mach_X/frames/Resized/.
+    4. Baixar o mapa base Sentinel-2 separadamente com baixar_mapa_sentinel2.py
+       (não depende deste script, roda em paralelo).
 """
 
 import os
 import sys
-import math
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import requests
 import cv2
 from pyproj import Geod
 from ambiance import Atmosphere
 
+# utils.py mora na raiz de visual-odometry/, um nível acima desta pasta
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import (gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints,
                    recortar_frame_google_earth, recortar_para_dataset,
                    FRAME_RECORTE_PX, GE_PRIMEIRO_FRAME_VALIDO)
-# gerar_resized/reconciliar_df_com_frames vivem em map_matching_naip/ e são
-# compartilhados por todos os geradores de rota (evita 4 cópias divergentes).
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "map_matching_naip"))
 from criar_rota_champaign import gerar_resized, reconciliar_df_com_frames
 
 # ==========================================
 # CONFIGURAÇÕES GERAIS
 # ==========================================
-ALTITUDE   = 1500   # metros
-TILT       = 0      # ângulo de inclinação da câmera
-MACH       = 2.0    # número de Mach
+ALTITUDE   = 3500   # metros — rota de altitude maior, pra simular GSD mais grosseiro
+TILT       = 0      # câmera nadir (reto para baixo)
+MACH       = 1.0    # velocidade inicial de teste; editar e rerodar para outras
 FPS        = 1      # frames por segundo (pontos no CSV)
 
 H_FOV      = 60     # FOV horizontal da câmera (graus)
@@ -37,15 +59,17 @@ SENSOR_PX  = 640    # largura do sensor em pixels
 # ==========================================
 # PASTAS DE TRABALHO
 # ==========================================
-IMAGE_DIR  = r"C:\Users\bbs_l\OneDrive\Leandro\ITA\PMG\Google earth\1500_2_TIF"
-OUTPUT_DIR = r"C:\Users\bbs_l\OneDrive\Leandro\ITA\PMG\Google earth\1500_2_TIF"
+BASE_ROTA  = r"C:\Users\bbs_l\OneDrive\Leandro\ITA\MESTRADO\Tese\rotas_quadradas\CHAMPAIGN_ALT3500"
+ROUTE_DIR  = os.path.join(BASE_ROTA, f"mach_{MACH}")          # CSV + KML
+IMAGE_DIR  = os.path.join(ROUTE_DIR, "frames")                 # PNGs brutos do Google Earth
+OUTPUT_DIR = ROUTE_DIR
 
 # ==========================================
 # CONFIGURAÇÕES DA ROTA QUADRADA
 # ==========================================
-SQUARE_START           = (-46.346074, -23.021269)  # (longitude, latitude)
+SQUARE_START           = (-88.190, 40.085)  # (longitude, latitude) — borda SE de Champaign-Urbana, IL (mesma do CHAMPAIGN original)
 SQUARE_INITIAL_HEADING = 0      # proa inicial em graus (0=Norte, 90=Leste)
-SQUARE_SIDE_KM         = 10     # lado do quadrado em km
+SQUARE_SIDE_KM         = 2.2    # lado do quadrado em km -> perímetro ~8.8km (mesmo tamanho do CHAMPAIGN original)
 SQUARE_TURN_DIRECTION  = 1      # +1 = direita (horário), -1 = esquerda
 SQUARE_N_CURVE_POINTS  = 30     # pontos por curva de 90° (mais = mais suave)
 
@@ -59,21 +83,8 @@ def generate_square_route(start_lon, start_lat, initial_heading, side_km,
                            altitude=ALTITUDE, tilt=TILT):
     """
     Gera waypoints para uma rota quadrada com 3 curvas de 90° suaves.
-
-    Geometria:
-      O ponto de partida é o canto C0 do quadrado ideal (vértice).
-      Cada lado tem um canto virtual a side_km do anterior.
-      Nas 3 primeiras curvas, a reta antes do arco é encurtada em r (raio),
-      e o arco de 90° (ease in-out) conecta suavemente os lados adjacentes.
-      O último lado encurta em r para que a rota retorne ao ponto C0.
-
-      Comprimentos de reta entre pontos de tangência:
-        Lado 0 (sem arco de entrada): reta = side - r
-        Lados 1 e 2 (arco entrada + arco saída): reta = side - 2r
-        Lado 3 (sem arco de saída): reta = side - r
-      O raio r = 10% do lado.
-
-    O fechamento fim→início é < 10 m (erro geodésico aceitável).
+    (idêntico a criar_rota_quadrado.py — ver docstring lá para detalhes
+    da geometria).
     """
     g = Geod(ellps='clrk66')
     side_m         = side_km * 1000.0
@@ -118,12 +129,12 @@ def generate_square_route(start_lon, start_lat, initial_heading, side_km,
             cen_lon, cen_lat = move(cs_lon, cs_lat, perp_hdg, radius)
             ang_start = (perp_hdg + 180.0) % 360.0
 
-            arc_len = radius * math.radians(90.0)
+            arc_len = radius * math_radians_90()
             seg_dur = (arc_len / speed_ms) / n_curve_points
 
             for k in range(1, n_curve_points + 1):
                 frac   = k / n_curve_points
-                smooth = (1.0 - math.cos(frac * math.pi)) / 2.0
+                smooth = (1.0 - np.cos(frac * np.pi)) / 2.0
                 ang_now = ang_start + smooth * turn_angle_deg
                 pt_lon, pt_lat = move(cen_lon, cen_lat, ang_now, radius)
                 new_hdg = (hdg + smooth * turn_angle_deg) % 360.0
@@ -144,19 +155,16 @@ def generate_square_route(start_lon, start_lat, initial_heading, side_km,
     return waypoints
 
 
-# ==========================================
-# INTERPOLAÇÃO → CSV
-# ==========================================
+def math_radians_90():
+    return np.pi / 2.0
+
 
 # ==========================================
 # ELEVAÇÃO DO TERRENO (API)
 # ==========================================
 
 def get_elevation(lat_list, lon_list):
-    """
-    Consulta a API Open-Elevation.
-    Retorna lista de elevações em metros; em caso de falha retorna zeros.
-    """
+    """Consulta a API Open-Elevation. Em caso de falha, retorna zeros."""
     print("Consultando API de elevação...")
     url       = "https://api.open-elevation.com/api/v1/lookup"
     locations = [{"latitude": lat, "longitude": lon}
@@ -196,7 +204,8 @@ def calculate_fov(df, altitude=ALTITUDE, h_fov=H_FOV, sensor_px=SENSOR_PX):
 # ==========================================
 
 if __name__ == "__main__":
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(ROUTE_DIR, exist_ok=True)
+    os.makedirs(IMAGE_DIR, exist_ok=True)
 
     atmos          = Atmosphere(ALTITUDE)
     speed_of_sound = float(atmos.speed_of_sound[0])
@@ -204,7 +213,7 @@ if __name__ == "__main__":
 
     print(f"Altitude: {ALTITUDE} m | Mach: {MACH} | v = {speed_ms:.1f} m/s "
           f"(som = {speed_of_sound:.1f} m/s)")
-    print(f"Saída: {OUTPUT_DIR}\n")
+    print(f"Rota: {ROUTE_DIR}\n")
 
     # 1. Waypoints
     print("Gerando rota...")
@@ -222,6 +231,7 @@ if __name__ == "__main__":
     dur_total = sum(w["duration"] for w in waypoints)
     print(f"  Waypoints : {len(waypoints)}")
     print(f"  Duração   : {dur_total:.1f} s  ({dur_total/60:.2f} min)")
+    print(f"  Perímetro : {4 * SQUARE_SIDE_KM:.1f} km")
 
     # 2. Interpolação → DataFrame
     print("Interpolando coordenadas...")
@@ -233,10 +243,10 @@ if __name__ == "__main__":
     df["Altura"] = ALTITUDE - np.array(elevations)
 
     # 4. KML
-    tour_file = os.path.join(OUTPUT_DIR, f"KML_tour_{ALTITUDE}_{MACH}.kml")
+    tour_file = os.path.join(ROUTE_DIR, f"KML_tour_{ALTITUDE}_{MACH}.kml")
     gerar_tour_kml(df, tour_file, ALTITUDE, MACH)
 
-    path_file = os.path.join(OUTPUT_DIR, f"KML_path_{ALTITUDE}_{MACH}.kml")
+    path_file = os.path.join(ROUTE_DIR, f"KML_path_{ALTITUDE}_{MACH}.kml")
     gerar_pontos_kml(df, path_file, ALTITUDE, MACH)
 
     # 5. Dataset = amostras que têm imagem própria (ver GE_PRIMEIRO_FRAME_VALIDO)
@@ -246,12 +256,12 @@ if __name__ == "__main__":
           f"de t=0 duas vezes e nunca salva t=1)")
 
     # 6. Resize — o CSV manda em quais arquivos entram
-    escritos, faltando = gerar_resized(IMAGE_DIR, OUTPUT_DIR, list(df_ds["File"]))
+    escritos, faltando = gerar_resized(IMAGE_DIR, IMAGE_DIR, list(df_ds["File"]))
     if escritos:
         df_ds = reconciliar_df_com_frames(df_ds, faltando)
 
     # 7. CSV (depois da reconciliação, para bater 1:1 com Resized/)
-    csv_file = os.path.join(OUTPUT_DIR, f"Coord-Heading-Elev_{ALTITUDE}_{MACH}.csv")
+    csv_file = os.path.join(ROUTE_DIR, f"Coord-Heading-Elev_{ALTITUDE}_{MACH}.csv")
     df_ds.to_csv(csv_file, index=False, float_format="%.8f")
     print(f"[CSV]       {csv_file}  ({len(df_ds)} linhas)")
 
@@ -259,3 +269,6 @@ if __name__ == "__main__":
     calculate_fov(df_ds)
 
     print("\nProcesso concluído!")
+    print(f"\nPróximo passo: abra {tour_file} no Google Earth Pro, confira a área,")
+    print(f"grave o voo e salve os frames PNG em: {IMAGE_DIR}")
+    print(f"Depois rode este script de novo para gerar Resized/.")

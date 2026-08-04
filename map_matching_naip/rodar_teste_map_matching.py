@@ -36,6 +36,7 @@ sys.path.insert(0, str(PIPELINE_DIR))
 
 from main import montar_config
 from odometria_visual import OdometriaVisual
+from utils import camera_do_recorte
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -44,7 +45,11 @@ from odometria_visual import OdometriaVisual
 BASE = Path(r"C:\Users\bbs_l\OneDrive\Leandro\ITA\MESTRADO\Tese\rotas_quadradas\CHAMPAIGN")
 MAP_TIF = BASE / "map.tif"   # compartilhado entre todos os machs (mesma área)
 
-CAMERA = {"width": 640, "height": 640, "h_fov": 60, "v_fov": 60}
+# Derivado do recorte vigente (utils.FRAME_RECORTE_PX) em vez de hardcoded:
+# este dict é importado por testar_map_matching_puro.py, diagnosticar_contraste.py,
+# diagnosticar_offset_centro.py e verificar_alinhamento_patch.py, e ficar
+# dessincronizado do recorte real reintroduz silenciosamente um erro de escala/centro.
+CAMERA = camera_do_recorte()
 
 DEFAULT_DETECTORS = ["ORB", "AKAZE", "SUPERPOINT"]
 DEFAULT_ABS_DETECTORS = ["LOFTR"]
@@ -128,6 +133,8 @@ def montar_cfg(mach, detector, map_matching_on, frames_dir, csv_name, output_fol
             "roi_center_mode":    roi_center_mode,
             "scale_search_step":  0.05,
             # Fix do "runaway" (2026-07-08) — ver map_matching.py::_busca_angulo.
+            # Testado range=15° (2026-07-11), piorou (ver
+            # project_map_matching_offset_yaw.md) — revertido para 30°.
             "angle_search_range_deg":  30.0,
             "angle_search_candidates": 5,
         },
@@ -150,12 +157,28 @@ def preparar_pasta_imagens(base_dir, mach):
     return str(resized)
 
 
+def resolver_csv_name(base_dir, mach):
+    """
+    Nome do CSV de ground truth (Coord-Heading-Elev_<ALTITUDE>_<MACH>.csv) --
+    a altitude no nome varia por rota (1500 em CHAMPAIGN/CHAMPAIGN_GRANDE,
+    3500 em CHAMPAIGN_ALT3500, etc.), então descobre o nome real por glob em
+    vez de assumir 1500 fixo.
+    """
+    route_dir = base_dir / f"mach_{mach}"
+    candidatos = list(route_dir.glob(f"Coord-Heading-Elev_*_{mach}.csv"))
+    if not candidatos:
+        sys.exit(f"[erro] Nenhum CSV 'Coord-Heading-Elev_*_{mach}.csv' encontrado em {route_dir}")
+    if len(candidatos) > 1:
+        sys.exit(f"[erro] Mais de um CSV candidato em {route_dir}: {[c.name for c in candidatos]} -- ambíguo.")
+    return candidatos[0].name
+
+
 def rodar_par(mach, detector, base_dir, map_tif, abs_detector, roi_margin_factor, interval,
               roi_center_mode="estimado"):
     """Roda o mesmo par (detector, abs_detector) COM e SEM map matching.
     Retorna dict com erro final e tempo (s) de execução de cada variante."""
     frames_dir = preparar_pasta_imagens(base_dir, mach)
-    csv_name   = f"Coord-Heading-Elev_1500_{mach}.csv"
+    csv_name   = resolver_csv_name(base_dir, mach)
 
     resultado = {}
     for ligado, tag in [(False, "sem_mapmatch"), (True, "com_mapmatch")]:

@@ -34,10 +34,11 @@ from pyproj import Geod
 from ambiance import Atmosphere
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints
+from utils import (gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints,
+                   recortar_para_dataset, GE_PRIMEIRO_FRAME_VALIDO)
 from criar_rota_champaign import (
-    generate_square_route, calculate_fov, get_elevation, resize_images,
-    reconciliar_csv_com_frames,
+    generate_square_route, calculate_fov, get_elevation, gerar_resized,
+    reconciliar_df_com_frames,
 )
 
 # ==========================================
@@ -111,15 +112,20 @@ if __name__ == "__main__":
     path_file = os.path.join(ROUTE_DIR, f"KML_path_{ALTITUDE}_{MACH}.kml")
     gerar_pontos_kml(df, path_file, ALTITUDE, MACH)
 
+    df_ds = recortar_para_dataset(df)
+    print(f"  Dataset   : {len(df_ds)} amostras (descartadas as "
+          f"{GE_PRIMEIRO_FRAME_VALIDO} primeiras: o Movie Maker grava o render "
+          f"de t=0 duas vezes e nunca salva t=1)")
+
+    escritos, faltando = gerar_resized(IMAGE_DIR, IMAGE_DIR, list(df_ds["File"]))
+    if escritos:
+        df_ds = reconciliar_df_com_frames(df_ds, faltando)
+
     csv_file = os.path.join(ROUTE_DIR, f"Coord-Heading-Elev_{ALTITUDE}_{MACH}.csv")
-    df.to_csv(csv_file, index=False, float_format="%.8f")
-    print(f"[CSV]       {csv_file}  ({len(df)} linhas)")
+    df_ds.to_csv(csv_file, index=False, float_format="%.8f")
+    print(f"[CSV]       {csv_file}  ({len(df_ds)} linhas)")
 
-    calculate_fov(df, altitude=ALTITUDE, h_fov=H_FOV, sensor_px=SENSOR_PX)
-
-    n_frames = resize_images(IMAGE_DIR, IMAGE_DIR, expected_count=len(df))
-    if n_frames:
-        reconciliar_csv_com_frames(csv_file, n_frames)
+    calculate_fov(df_ds, altitude=ALTITUDE, h_fov=H_FOV, sensor_px=SENSOR_PX)
 
     print("\nProcesso concluído!")
     print(f"\nPróximo passo: abra {tour_file} no Google Earth Pro, confira a área,")

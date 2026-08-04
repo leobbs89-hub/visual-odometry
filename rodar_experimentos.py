@@ -18,11 +18,14 @@ import traceback
 import argparse
 from pathlib import Path
 
+import cv2
+
 PIPELINE_DIR = Path(__file__).parent
 sys.path.insert(0, str(PIPELINE_DIR))
 
 from main import montar_config
 from odometria_visual import OdometriaVisual
+from utils import camera_do_recorte, FRAME_RECORTE_PX
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -37,7 +40,9 @@ NEURAL_DETECTORS = {"SUPERPOINT", "LOFTR", "MATCHFORMER"}
 # (tag usada no nome da pasta, device passado ao pipeline)
 NEURAL_RUNS = [("GPU", "auto"), ("CPU", "cpu")]
 
-CAMERA = {"width": 640, "height": 640, "h_fov": 60, "v_fov": 60}
+# Derivado do recorte vigente (utils.FRAME_RECORTE_PX), não hardcoded — ver
+# camera_do_recorte() para o porquê.
+CAMERA = camera_do_recorte()
 
 _DET_PARAMS = {
     "ORB": {
@@ -140,7 +145,25 @@ def preparar_pasta_imagens(rota: str, mach: float) -> str:
     resized       = frames_dir / "Resized"
 
     if resized_clean.exists():
-        return str(resized_clean)
+        # Resized_clean é uma CÓPIA de Resized/ — se o recorte mudou (ex.: a
+        # troca de 640 descentrado para 576 centrado no nadir, 2026-08-03), a
+        # cópia antiga fica obsoleta e seria usada silenciosamente, desfazendo
+        # a correção. Reconstrói quando as dimensões não batem com o recorte
+        # vigente.
+        amostra = next((f for f in sorted(os.listdir(resized_clean))
+                        if f.endswith(".png")), None)
+        img = cv2.imread(str(resized_clean / amostra)) if amostra else None
+        if img is not None and img.shape[:2] == (FRAME_RECORTE_PX, FRAME_RECORTE_PX):
+            return str(resized_clean)
+        print(f"  Resized_clean com recorte obsoleto "
+              f"({'vazia' if img is None else f'{img.shape[1]}x{img.shape[0]}'}, "
+              f"esperado {FRAME_RECORTE_PX}x{FRAME_RECORTE_PX}) — reconstruindo...")
+        # Esvazia o conteúdo mas PRESERVA a pasta: rmtree() falha com
+        # PermissionError no rmdir final nestas pastas sincronizadas pelo
+        # OneDrive, e a repopulação logo abaixo não precisa da pasta removida.
+        for f in os.listdir(resized_clean):
+            if f.endswith(".png"):
+                os.remove(resized_clean / f)
 
     all_pngs   = [f for f in os.listdir(resized) if f.endswith(".png")]
     clean_pngs = [f for f in all_pngs if f.startswith("-")]

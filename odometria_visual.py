@@ -115,6 +115,13 @@ class OdometriaVisual(MapMatchingMixin):
             self.inlier_thr_position    = mm_params.get('inlier_thr_position',    default_thr[0])
             self.inlier_thr_angle_scale = mm_params.get('inlier_thr_angle_scale', default_thr[1])
 
+            # Experimentos de gap de domínio (default: sem efeito):
+            #   photometric_norm normaliza foto de voo × patch antes do match
+            #   base_map_degrade_gsd simula fonte de GSD mais grosseiro
+            # Lidos via getattr no map_matching.py (podem faltar em stubs).
+            self.photometric_norm = str(config.get('photometric_norm', 'none')).lower()
+            self.base_map_degrade_gsd = config.get('base_map_degrade_gsd', None)
+
             self.escala_atual        = 1.0
             self._escala_inicializada = False
 
@@ -130,6 +137,7 @@ class OdometriaVisual(MapMatchingMixin):
 
         # --- Listas de estado ---
         self.imgs_list     = []
+        self.imgs_list_color = []  # só populada se algum detector tiver requires_color=True
         self.lat_real_list = []
         self.lon_real_list = []
         self.height_list   = []
@@ -143,7 +151,7 @@ class OdometriaVisual(MapMatchingMixin):
         self._yaw_max_initial_deg     = config.get('yaw_filter_max_initial_yaw_deg', 45)
         self._yaw_min_inlier_ratio    = config.get('yaw_filter_min_inlier_ratio', 0.10)
         self._yaw_min_confidence      = config.get('yaw_filter_min_confidence', 0.2)
-        self._first_step_gps_seed    = config.get('first_step_gps_seed', True)
+        self._first_step_gps_seed    = config.get('first_step_gps_seed', False)
 
         self._inicializar_detector_odometria()
 
@@ -202,11 +210,21 @@ class OdometriaVisual(MapMatchingMixin):
     def _carregar_dados(self):
         """Carrega as imagens e os dados de ground truth (GPS)."""
         image_path = self.config['paths']['image_path']
+
+        # Carrega a versão colorida em paralelo só se algum dos dois
+        # detectores (odometria e/ou absoluto) realmente usa cor — evita
+        # custo de IO/memória extra para o caso comum (grayscale-only).
+        precisa_cor = self.detector_odometria.requires_color or (
+            self.use_map_matching and self.detector_absoluto.requires_color
+        )
+
         for file in sorted(os.listdir(image_path)):
             img_path = os.path.join(image_path, file)
             img = cv.imread(img_path, cv.IMREAD_GRAYSCALE)
             if img is not None:
                 self.imgs_list.append(img)
+                if precisa_cor:
+                    self.imgs_list_color.append(cv.imread(img_path, cv.IMREAD_COLOR))
 
         if not self.imgs_list:
             raise FileNotFoundError(f"Nenhuma imagem encontrada em: {image_path}")
@@ -246,6 +264,16 @@ class OdometriaVisual(MapMatchingMixin):
     # ------------------------------------------------------------------
     # Correspondências de features
     # ------------------------------------------------------------------
+
+    def _frame_para_detector(self, idx, det):
+        """
+        Retorna a imagem do frame `idx` no formato esperado por `det`:
+        colorida (BGR) se `det.requires_color`, senão grayscale (comportamento
+        padrão, idêntico ao de antes do suporte a RoMa).
+        """
+        if det.requires_color:
+            return self.imgs_list_color[idx]
+        return self.imgs_list[idx]
 
     def _obter_correspondencias(self, img1, img2, prev_features=None,
                                  usar_absoluto=False):
@@ -409,8 +437,10 @@ class OdometriaVisual(MapMatchingMixin):
         t0 = time.time()
 
         # 1. Correspondências (odometria)
+        img1_odom = self._frame_para_detector(i, self.detector_odometria)
+        img2_odom = self._frame_para_detector(i + 1, self.detector_odometria)
         pts1, pts2, kpt1, kpt2, n_matches, curr_features, confidences = self._obter_correspondencias(
-            prev_img, curr_img, prev_features, usar_absoluto=False
+            img1_odom, img2_odom, prev_features, usar_absoluto=False
         )
         prev_features = curr_features
         if pts1 is None or len(pts1) < 8:
@@ -482,12 +512,13 @@ class OdometriaVisual(MapMatchingMixin):
             if self.roi_center_mode == 'real_bbox':
                 lat_real_roi = self.lat_real_list[i + 1]
                 lon_real_roi = self.lon_real_list[i + 1]
+            img_aereo_absoluto = self._frame_para_detector(i + 1, self.detector_absoluto)
             (est_lat, est_lon,
              yaw_acumulado_est,
              self.escala_atual,
              n_inliers_map,
              map_ok) = self._corrigir_posicao_pelo_mapa(
-                curr_img, est_lat, est_lon, yaw_acumulado_est, i,
+                img_aereo_absoluto, est_lat, est_lon, yaw_acumulado_est, i,
                 lat_real=lat_real_roi, lon_real=lon_real_roi
             )
 

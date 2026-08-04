@@ -126,6 +126,11 @@ def montar_config(cfg: dict) -> dict:
         "angle_search_range_deg":  mm.get("angle_search_range_deg", 30.0),
         "angle_search_candidates": mm.get("angle_search_candidates", 5),
         "angle_estimation_method": mm.get("angle_estimation_method", "grid_search"),
+        # Experimentos de gap de domínio (default: sem efeito):
+        #   photometric_norm: none|clahe|histmatch|gradient (combináveis por '+')
+        #   base_map_degrade_gsd: m/px alvo para degradar o mapa base (null = off)
+        "photometric_norm":       mm.get("photometric_norm", "none"),
+        "base_map_degrade_gsd":   mm.get("base_map_degrade_gsd", None),
         "map_matching_params":    {
             k: mm[k] for k in ("inlier_thr_position", "inlier_thr_angle_scale")
             if k in mm
@@ -134,7 +139,10 @@ def montar_config(cfg: dict) -> dict:
         "yaw_filter_max_initial_yaw_deg": yaw_filter.get("max_initial_yaw_deg", 45),
         "yaw_filter_min_inlier_ratio":    yaw_filter.get("min_inlier_ratio", 0.10),
         "yaw_filter_min_confidence":      yaw_filter.get("min_confidence", 0.20),
-        "first_step_gps_seed": pipeline_cfg.get("first_step_gps_seed", True),
+        # Default False desde 2026-08-03: a causa raiz (associação CSV<->frame
+        # deslocada em 1) foi corrigida na origem, e a semente passaria a
+        # injetar ground truth numa estimativa já correta. Ver config.yaml.
+        "first_step_gps_seed": pipeline_cfg.get("first_step_gps_seed", False),
     }
 
 
@@ -154,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--detector", "-d",
-        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
+        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER", "ROMA"],
         help="Sobrescreve o campo 'detector' do config.yaml",
     )
     parser.add_argument(
@@ -170,7 +178,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--abs-detector",
-        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER"],
+        choices=["ORB", "AKAZE", "SIFT", "SUPERPOINT", "LOFTR", "MATCHFORMER", "ROMA"],
         dest="abs_detector",
         help=(
             "Sobrescreve o detector do módulo de localização absoluta "

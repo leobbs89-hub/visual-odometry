@@ -43,7 +43,9 @@ from ambiance import Atmosphere
 
 # utils.py mora na raiz de visual-odometry/, um nível acima desta pasta
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints
+from utils import (gerar_tour_kml, gerar_pontos_kml, interpolar_waypoints,
+                   recortar_frame_google_earth, recortar_para_dataset,
+                   FRAME_RECORTE_PX, GE_PRIMEIRO_FRAME_VALIDO)
 
 # ==========================================
 # CONFIGURAÇÕES GERAIS
@@ -199,130 +201,83 @@ def calculate_fov(df, altitude=ALTITUDE, h_fov=H_FOV, sensor_px=SENSOR_PX):
 # REDIMENSIONAMENTO DE IMAGENS
 # ==========================================
 
-def _remover_frame_extra_inicial(image_dir, arquivos):
+def gerar_resized(image_dir, output_dir, arquivos_desejados):
     """
-    Detecta e move pra fora do fluxo um frame "-000000.png" espúrio que o
-    Google Earth às vezes grava a mais no início da captura.
+    Escreve em output_dir/Resized o recorte de EXATAMENTE os arquivos que o
+    CSV de ground truth pede, na ordem em que ele pede.
 
-    Causa: o primeiro waypoint da rota é um "bounce" de duração 0 (câmera
-    salta pra posição inicial antes de qualquer interpolação de voo, ver
-    generate_square_route). A gravação/extração de frames do Google Earth
-    captura um frame estático nesse instante ALÉM do frame da primeira
-    posição interpolada de verdade -- os dois são pixel-idênticos. Nosso
-    CSV é indexado a partir de 1 ("-000001.png" = t=0), então esse frame
-    extra sobra numerado "-000000.png", sem linha correspondente no CSV.
+    Antes isto varria a pasta e adivinhava quais frames descartar (duplicata
+    inicial byte-a-byte, linha fantasma no fim, captura curta). A adivinhação
+    deixou de ser necessária: `interpolar_waypoints` passou a nomear cada
+    amostra pelo segundo de voo e `recortar_para_dataset` já remove as que não
+    têm imagem própria (ver utils.GE_PRIMEIRO_FRAME_VALIDO). O CSV virou a
+    autoridade sobre quais arquivos entram, e o que sobra na pasta de brutos
+    (as duas escritas duplicadas do início, frames além do fim do voo) fica
+    simplesmente sem ser referenciado, sem precisar ser movido nem apagado.
 
-    Checagem é INCONDICIONAL sobre os dois primeiros arquivos (não depende
-    de bater com nenhuma contagem esperada -- a contagem total de frames
-    pode coincidir com o esperado por outro motivo, ex. o voo também
-    terminou um frame curto no final, mascarando esse duplicado inicial se
-    a checagem fosse só por contagem). Só age quando os dois primeiros
-    frames são bit-a-bit idênticos. Move o extra para "_extra_<nome>.png"
-    (mesma convenção usada manualmente antes) em vez de apagar.
-    """
-    if len(arquivos) < 2:
-        return arquivos
-
-    primeiro, segundo = arquivos[0], arquivos[1]
-    caminho1 = os.path.join(image_dir, primeiro)
-    caminho2 = os.path.join(image_dir, segundo)
-    with open(caminho1, "rb") as f1, open(caminho2, "rb") as f2:
-        identicos = f1.read() == f2.read()
-
-    if not identicos:
-        return arquivos
-
-    destino = os.path.join(image_dir, f"_extra_{primeiro}")
-    if os.path.exists(destino):
-        print(f"[Resize] '{primeiro}' já tinha sido quarentenado antes (existe '{os.path.basename(destino)}'); "
-              "ignorando de novo, sem sobrescrever.")
-    else:
-        os.rename(caminho1, destino)
-        print(f"[Resize] '{primeiro}' é duplicata exata de '{segundo}' (bounce inicial do Google Earth) "
-              f"e não tem linha no CSV -- movido para '{os.path.basename(destino)}', fora do pipeline.")
-    return arquivos[1:]
-
-
-def resize_images(image_dir=IMAGE_DIR, output_dir=IMAGE_DIR, expected_count=None):
-    """
-    Lê imagens .png de image_dir (frames brutos do Google Earth), corta para
-    SENSOR_PX linhas de altura e salva em output_dir/Resized.
-    Por padrão output_dir=image_dir, então o resultado fica em
-    mach_X/frames/Resized/ (convenção usada em FLORESTA/URBANO).
-
-    expected_count: número de linhas do CSV de ground truth (len(df)), só
-    para o aviso final -- ver _remover_frame_extra_inicial pra remoção do
-    duplicado inicial (incondicional, roda sempre que os 2 primeiros
-    frames baterem).
-
-    Retorna o número de imagens efetivamente escritas em Resized/ (depois
-    de remover o duplicado inicial, se houver), para o chamador reconciliar
-    contra o CSV se precisar (ver reconciliar_csv_com_frames).
+    Retorna (escritos, faltando) — nomes de arquivo, para o chamador
+    reconciliar o CSV.
     """
     if not os.path.exists(image_dir):
         print(f"[Resize] Pasta não encontrada: {image_dir}")
-        print(f"[Resize] Crie a pasta e coloque lá os PNGs capturados no Google Earth antes de rodar de novo.")
-        return 0
+        print("[Resize] Grave os PNGs no Google Earth antes de rodar de novo.")
+        return [], list(arquivos_desejados)
 
     resized_dir = os.path.join(output_dir, "Resized")
     os.makedirs(resized_dir, exist_ok=True)
 
-    arquivos = sorted(
-        f for f in os.listdir(image_dir)
-        if f.lower().endswith(".png") and not f.startswith("_extra_")
-    )
-    if not arquivos:
-        print(f"[Resize] Nenhuma imagem .png em: {image_dir}")
-        return 0
+    escritos, faltando = [], []
+    for fname in arquivos_desejados:
+        origem = os.path.join(image_dir, fname)
+        img = cv2.imread(origem) if os.path.exists(origem) else None
+        if img is None:
+            faltando.append(fname)
+            continue
+        cv2.imwrite(os.path.join(resized_dir, fname),
+                    recortar_frame_google_earth(img))
+        escritos.append(fname)
 
-    arquivos = _remover_frame_extra_inicial(image_dir, arquivos)
-
-    if expected_count is not None and len(arquivos) != expected_count:
-        print(f"[Resize] AVISO: {len(arquivos)} frames vão para Resized/, mas o CSV tem "
-              f"{expected_count} linhas -- contagem não bate.")
-
-    print(f"[Resize] {len(arquivos)} imagens -> {resized_dir}")
-    for fname in arquivos:
-        img = cv2.imread(os.path.join(image_dir, fname))
-        if img is not None:
-            cv2.imwrite(os.path.join(resized_dir, fname), img[:SENSOR_PX, :])
-    print("[Resize] Concluído.")
-    return len(arquivos)
+    if escritos:
+        print(f"[Resize] {len(escritos)} imagens -> {resized_dir} "
+              f"(recorte {FRAME_RECORTE_PX}x{FRAME_RECORTE_PX} centrado no nadir)")
+    if faltando:
+        print(f"[Resize] {len(faltando)} arquivos pedidos pelo CSV não existem "
+              f"na pasta de brutos (ex.: {faltando[0]}"
+              + (f" … {faltando[-1]}" if len(faltando) > 1 else "") + ")")
+    return escritos, faltando
 
 
-def reconciliar_csv_com_frames(csv_path, frame_count):
+def reconciliar_df_com_frames(df, faltando):
     """
-    Compara o número de frames efetivamente disponíveis em Resized/ (depois
-    de remover o duplicado inicial) contra o número de linhas do CSV de
-    ground truth, e corrige o CSV se a captura no Google Earth tiver
-    parado exatamente 1 frame curta do fim da rota (visto acontecer em
-    voos mais longos -- timing de captura manual/segundo-a-segundo tem
-    mais chance de perder o último frame quanto mais longa a rota).
+    Descarta do ground truth as amostras cujo frame não foi capturado.
 
-    Só age quando a diferença é EXATAMENTE 1 (frame_count == linhas - 1):
-    descarta a última linha do CSV (reescreve o arquivo) e avisa. Qualquer
-    outra diferença é reportada sem adivinhar.
-
-    Retorna True se o CSV foi reescrito.
+    Só descarta no FIM da rota, que é o padrão observado (a captura manual
+    segundo-a-segundo tende a parar antes do último instante, mais provável em
+    voos longos). Buraco no meio é sintoma de outra coisa — avisa e mantém a
+    linha, para não mascarar o problema.
     """
-    df = pd.read_csv(csv_path)
-    n_csv = len(df)
+    if not faltando:
+        return df
 
-    if frame_count == n_csv:
-        return False
+    faltantes = set(faltando)
+    marcado = df["File"].isin(faltantes)
+    # Índices ausentes que formam um sufixo contíguo do DataFrame
+    idx_falt = set(df.index[marcado])
+    corte = len(df)
+    while corte - 1 in idx_falt:
+        corte -= 1
 
-    if frame_count == n_csv - 1:
-        print(f"[Reconciliação] Resized/ tem {frame_count} frames, CSV tinha {n_csv} linhas -- "
-              f"a captura no Google Earth parou 1 frame curta do fim da rota (comum em voos "
-              f"longos). Descartando a última linha do CSV ('{df.iloc[-1]['File']}', sem frame "
-              "correspondente) e regravando.")
-        df.iloc[:-1].to_csv(csv_path, index=False, float_format="%.8f")
-        return True
+    no_meio = sorted(i for i in idx_falt if i < corte)
+    if no_meio:
+        print(f"[Reconciliação] AVISO: {len(no_meio)} frame(s) faltando no MEIO "
+              f"da rota (linhas {no_meio[:5]}{'…' if len(no_meio) > 5 else ''}) — "
+              "não é o padrão de captura curta no fim. Confira manualmente.")
 
-    print(f"[Reconciliação] AVISO: Resized/ tem {frame_count} frames, CSV tem {n_csv} linhas "
-          f"(diferença de {n_csv - frame_count}) -- não é o padrão conhecido de 1 frame curto, "
-          "não vou adivinhar. Confira manualmente antes de rodar o pipeline.")
-    return False
+    if corte < len(df):
+        print(f"[Reconciliação] Captura parou {len(df) - corte} frame(s) antes do "
+              f"fim da rota; descartando essas linhas do CSV.")
+        df = df.iloc[:corte].reset_index(drop=True)
+    return df
 
 
 # ==========================================
@@ -368,25 +323,32 @@ if __name__ == "__main__":
     elevations   = get_elevation(df["Lat"].tolist(), df["Long"].tolist())
     df["Altura"] = ALTITUDE - np.array(elevations)
 
-    # 4. KML
+    # 4. KML — sempre a rota COMPLETA: o voo tem de começar em t=0, mesmo que
+    #    as primeiras amostras não entrem no dataset (passo 5).
     tour_file = os.path.join(ROUTE_DIR, f"KML_tour_{ALTITUDE}_{MACH}.kml")
     gerar_tour_kml(df, tour_file, ALTITUDE, MACH)
 
     path_file = os.path.join(ROUTE_DIR, f"KML_path_{ALTITUDE}_{MACH}.kml")
     gerar_pontos_kml(df, path_file, ALTITUDE, MACH)
 
-    # 5. CSV
+    # 5. Dataset = amostras que têm imagem própria (ver GE_PRIMEIRO_FRAME_VALIDO)
+    df_ds = recortar_para_dataset(df)
+    print(f"  Dataset   : {len(df_ds)} amostras (descartadas as "
+          f"{GE_PRIMEIRO_FRAME_VALIDO} primeiras: o Movie Maker grava o render "
+          f"de t=0 duas vezes e nunca salva t=1)")
+
+    # 6. Resize — o CSV manda em quais arquivos entram
+    escritos, faltando = gerar_resized(IMAGE_DIR, IMAGE_DIR, list(df_ds["File"]))
+    if escritos:
+        df_ds = reconciliar_df_com_frames(df_ds, faltando)
+
+    # 7. CSV (depois da reconciliação, para bater 1:1 com Resized/)
     csv_file = os.path.join(ROUTE_DIR, f"Coord-Heading-Elev_{ALTITUDE}_{MACH}.csv")
-    df.to_csv(csv_file, index=False, float_format="%.8f")
-    print(f"[CSV]       {csv_file}  ({len(df)} linhas)")
+    df_ds.to_csv(csv_file, index=False, float_format="%.8f")
+    print(f"[CSV]       {csv_file}  ({len(df_ds)} linhas)")
 
-    # 6. FOV
-    calculate_fov(df)
-
-    # 7. Resize (só faz algo depois que você gravar os PNGs em IMAGE_DIR)
-    n_frames = resize_images(IMAGE_DIR, IMAGE_DIR, expected_count=len(df))
-    if n_frames:
-        reconciliar_csv_com_frames(csv_file, n_frames)
+    # 8. FOV
+    calculate_fov(df_ds)
 
     print("\nProcesso concluído!")
     print(f"\nPróximo passo: abra {tour_file} no Google Earth Pro, confira a área,")

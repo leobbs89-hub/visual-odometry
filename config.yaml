@@ -10,7 +10,7 @@ paths:
   # Apontando para o teste de Map Matching com mapa base NAIP (rota CHAMPAIGN).
   # Scripts de geração/download ficam em map_matching_naip/ (ver README lá).
   base_path: "C:/Users/bbs_l/OneDrive/Leandro/ITA/MESTRADO/Tese/rotas_quadradas/CHAMPAIGN/mach_1.0"
-  map_tif:        "../map.vrt"                         # VRT sobre os tiles NAIP originais (COG) — ver map_matching_naip/baixar_mapa_naip.py
+  map_tif:        "../map_v2.vrt"                       # VRT c/ margem 2000m (era 800m em map.vrt — insuficiente p/ roi_margin_factor atual, causava "ROI ultrapassa os limites do GeoTIFF"); ver map_matching_naip/baixar_mapa_naip.py
   images:         "frames/Resized"
   ground_truth:   "Coord-Heading-Elev_1500_1.0.csv"
   output:         "results"                   # relativo a base_path
@@ -18,17 +18,37 @@ paths:
 # --- Câmera ---
 # Resolução e campo de visão em graus.
 # fx, fy, cx, cy são calculados automaticamente a partir destes valores.
+#
+# Os valores abaixo descrevem o RECORTE salvo em Resized/, não o viewport
+# bruto do Google Earth. O viewport gravado é 640x700 com FOV horizontal de
+# 60 graus, o que dá fx = 640/2/tan(30) = 554,2563 px. A partir de 2026-08-03
+# o recorte passou a ser 576x576 CENTRADO NO NADIR (antes era 640x640 cortando
+# o rodapé, o que deixava o ponto principal 30 px fora do centro — ver
+# utils.recortar_frame_google_earth e
+# Tese/investigacao_offset_google_earth_causa_raiz.md).
+#
+# fx NÃO muda com o recorte (é propriedade da renderização, não do corte);
+# quem muda é o FOV coberto pelos pixels que sobraram:
+#   h_fov = v_fov = 2*atan((576/2)/554,2563) = 54,914152 graus
+# Recalcular estes dois valores se FRAME_RECORTE_PX mudar em utils.py.
 camera:
-  width:  640
-  height: 640
-  h_fov:  60   # horizontal field of view (graus)
-  v_fov:  60   # vertical field of view (graus)
+  width:  576
+  height: 576
+  h_fov:  54.914152   # horizontal field of view (graus)
+  v_fov:  54.914152   # vertical field of view (graus)
 
 # --- Detector ---
-# Opções: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER
-detector: ORB
+# Opções: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER | ROMA
+# Teste da hipótese de cor (2026-07-11): rodada anterior usou ROMA nos dois
+# papéis (odometria + map matching) e piorou muito (577,9m) — confundido,
+# pois RoMa como odometria parecia estar produzindo pose relativa ruim em
+# alguns pares (ver map_matching_naip/CLAUDE.md). Voltando ao SIFT aqui
+# (mesmo detector do teste de controle grayscale/RoMa-fake-color de
+# 2026-07-10) para isolar o efeito de cor SÓ no map matching — ver
+# map_matching.absolute_detector abaixo.
+detector: SIFT
 
-# --- Dispositivo para detectores neurais (SUPERPOINT, LOFTR, MATCHFORMER) ---
+# --- Dispositivo para detectores neurais (SUPERPOINT, LOFTR, MATCHFORMER, ROMA) ---
 # auto  → usa GPU se disponível, senão roda em CPU automaticamente (recomendado)
 # cpu   → força CPU mesmo que haja GPU (mais lento, sem dependência de CUDA)
 # cuda  → força GPU; lança erro se não houver CUDA disponível
@@ -91,6 +111,16 @@ detector_params:
       train_coarse_percent:   0.2
       train_pad_num_gt_min:   200
 
+  roma:
+    # Único detector com backbone (DINOv2) treinado em imagens RGB — usado
+    # para testar a hipótese "cor melhora a acurácia" (2026-07-11). Recebe
+    # imagens coloridas de verdade (não grayscale replicado em 3 canais),
+    # ver detectors.py::RomaDetector e odometria_visual.py::_carregar_dados.
+    coarse_res:    560     # resolução interna do matcher grosso (RoMa treina em 560)
+    upsample_res:  864     # resolução do refinamento fino
+    num_matches:   5000    # nº de correspondências subamostradas por model.sample()
+    # sample_thresh: 0.05  # opcional — limiar de confiança p/ sample_mode="threshold"
+
 # --- Correspondências (ORB / AKAZE) ---
 matcher:
   nn_match_ratio: 0.8
@@ -100,9 +130,13 @@ map_matching:
   enabled:   true
 
   # Detector do módulo de localização absoluta (independente da odometria)
-  # Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER
+  # Opções: ORB | AKAZE | SUPERPOINT | LOFTR | MATCHFORMER | ROMA
   # Recomendação da dissertação: LOFTR ou MATCHFORMER
-  absolute_detector: LOFTR
+  # ROMA setado temporariamente (2026-07-11) junto com o detector de odometria
+  # acima, para o teste da hipótese de cor no cenário CHAMPAIGN — ver
+  # detector_params.roma. Reverter para SUPERPOINT ao voltar ao experimento
+  # principal de map matching NAIP.
+  absolute_detector: SUPERPOINT
 
   interval:  1       # a cada quantos frames executar
 
@@ -131,6 +165,16 @@ map_matching:
   # odometria (que não tem suavização e fica ruidoso em curvas) e escolhe
   # o que der mais inliers. Ver map_matching_naip/CLAUDE.md para o
   # diagnóstico completo.
+  # Testado reduzir de 30° para 15° (2026-07-11), baseado num estudo de 25
+  # frames onde o offset nunca passou de ±15°. RESULTADO: piorou (erro
+  # acumulado 221.7m -> 455.3m, MAP_OK caiu de 100% para 92% no mesmo
+  # cenário) — revertido para 30°. Ver project_map_matching_offset_yaw.md
+  # (memória) para os dois estudos. Conclusão: mesmo o offset nunca batendo
+  # no limite antigo numa amostra, cortar o alcance do bracket reduz
+  # robustez (provavelmente por causa da natureza estocástica do RANSAC
+  # combinada com casos onde o candidato salvador só aparece fora de ±15°
+  # em frames que não estavam na amostra original) — não reduzir sem
+  # validação mais ampla (múltiplas rodadas, mais cenários).
   angle_search_range_deg: 30.0    # bracket: yaw_estimado ± este valor
   angle_search_candidates: 5      # nº de candidatos no bracket (inclui offset=0)
 
@@ -154,26 +198,27 @@ pipeline:
     min_confidence:      0.20
 
   # Semear a distância do primeiro par de frames (i=0) com o valor real
-  # (GPS) em vez do valor estimado visualmente. Motivo: bug confirmado
-  # 2026-07-12 — a captura manual do tour no Google Earth Pro introduz um
-  # atraso de ~1s logo no início de toda rota (a "leg 0", entre o waypoint
-  # de bounce e o primeiro waypoint real, sempre reta e de velocidade
-  # constante), fazendo o CONTEÚDO de "-000002.png" (rotulado t=1s no CSV)
-  # corresponder fisicamente à posição da câmera em t≈2s. Isso faz
-  # DIST_EST(IMG=0) sair sistematicamente ~2,00× DIST_REAL(IMG=0) em todos
-  # os detectores e rotas testados (ver
-  # Tese/investigacao_bug_distancia_dobrada_frame_inicial.md e
-  # Tese/validar_hipotese_captura_atrasada.py), o que se propaga como um
-  # deslocamento de ~1 perna ao longo de toda a trajetória estimada
-  # (dead-reckoning puro). Como a direção (yaw) já é filtrada pelo
-  # yaw_filter acima e não está corrompida, corrigir só a distância desse
-  # passo específico elimina o viés sem precisar recapturar as imagens.
-  first_step_gps_seed: true
+  # (GPS) em vez do valor estimado visualmente.
+  #
+  # DESLIGADO em 2026-08-03. Isto era um paliativo para a causa raiz que foi
+  # corrigida na origem: o Movie Maker grava o render de t=0 duas vezes e nunca
+  # salva o frame de t=1, então "-000002.png" (rotulado t=1 pela convenção
+  # antiga) era fisicamente a posição de t=2 — daí DIST_EST(IMG=0) sair ~2,00×
+  # DIST_REAL. A observação original estava certa; o que faltou foi perceber
+  # que o mesmo deslocamento valia para a rota INTEIRA, não só o primeiro
+  # passo. Com a associação CSV<->frame corrigida (utils.recortar_para_dataset
+  # + utils.nome_frame, e a migração dos datasets já capturados em
+  # Tese/rotas_quadradas/corrigir_associacao_frames.py) o 2× desaparece
+  # sozinho, e manter a semente passaria a INJETAR ground truth numa estimativa
+  # que já está correta.
+  #
+  # Ver Tese/investigacao_offset_google_earth_causa_raiz.md, seção B.
+  first_step_gps_seed: false
 
 # --- Visualização e Logs ---
 display:
-  show_plot:          true    # gráfico de trajetória em tempo real
+  show_plot:          true   # gráfico de trajetória em tempo real (desligado temporariamente p/ verificação headless — travava em GUI, ver conversa 2026-07-11)
   show_images:        false   # janela com correspondências entre frames
   print_console:      true    # imprime os resultados frame a frame no console
-  show_map_matching:  true    # janela OpenCV com correspondências do map matching
-  debug_map_matching: false   # pausa em cada frame e exibe imagens do map matching
+  show_map_matching:  true   # janela OpenCV com correspondências do map matching (idem)
+  debug_map_matching: true   # pausa em cada frame e exibe imagens do map matching
