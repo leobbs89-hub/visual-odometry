@@ -55,6 +55,15 @@ try:
 except ImportError:
     MATCHFORMER_AVAILABLE = False
 
+# RoMa (backbone DINOv2, treinado em RGB — único detector deste módulo que
+# usa cor de verdade; ver RomaDetector abaixo)
+try:
+    from romatch import roma_outdoor
+    from PIL import Image
+    ROMA_AVAILABLE = True
+except ImportError:
+    ROMA_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # cv2 — só usado pelos detectores OpenCV (import tardio evita custo p/
@@ -82,6 +91,10 @@ class MatchResult:
 class FeatureDetector:
     """Interface comum para os detectores/matchers de features."""
     name: str
+    # True apenas para detectores que exploram cor de verdade (hoje só RoMa).
+    # Controla se OdometriaVisual entrega img1/img2 em BGR (H,W,3) ou
+    # grayscale (H,W) — ver odometria_visual.py::_carregar_dados.
+    requires_color: bool = False
 
     def match(self, img1, img2, prev_state=None) -> MatchResult:
         raise NotImplementedError
@@ -289,6 +302,54 @@ class MatchFormerDetector(FeatureDetector):
         return MatchResult(pts1, pts2, n, n, n, None, confidences)
 
 
+class RomaDetector(FeatureDetector):
+    name = "ROMA"
+    requires_color = True
+
+    def __init__(self, params, matcher_params, device, papel="odometria"):
+        if not ROMA_AVAILABLE:
+            raise ImportError(
+                "RoMa (pacote romatch) não foi encontrado.\n"
+                "Instale com: pip install romatch\n"
+                "Atenção: romatch traz albumentations, que instala "
+                "opencv-python-headless e sobrescreve silenciosamente o "
+                "opencv-python/opencv-contrib-python já instalado (mesmo "
+                "namespace cv2). Depois de instalar, rode:\n"
+                "  pip uninstall -y opencv-python-headless\n"
+                "  pip install --force-reinstall --no-deps "
+                "opencv-python==<versão original> "
+                "opencv-contrib-python==<versão original>\n"
+                "Funciona em CPU — GPU não é obrigatória, mas é bem mais lento "
+                "(backbone DINOv2)."
+            )
+        params = dict(params)
+        self.num_matches   = params.pop('num_matches', 5000)
+        sample_thresh      = params.pop('sample_thresh', None)
+        self.device = device
+        self.model  = roma_outdoor(device=device, **params)
+        if sample_thresh is not None:
+            self.model.sample_thresh = sample_thresh
+        logger.info("RoMa [%s] pronto em [%s]", papel, device)
+
+    def match(self, img1, img2, prev_state=None):
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        # img1/img2 chegam em BGR (cv.imread/rasterio já convertidos) —
+        # PIL espera RGB.
+        im_a = Image.fromarray(cv.cvtColor(img1, cv.COLOR_BGR2RGB))
+        im_b = Image.fromarray(cv.cvtColor(img2, cv.COLOR_BGR2RGB))
+
+        warp, certainty = self.model.match(im_a, im_b, device=self.device)
+        matches, conf = self.model.sample(warp, certainty, num=self.num_matches)
+        kpts1, kpts2 = self.model.to_pixel_coordinates(matches, h1, w1, h2, w2)
+
+        pts1 = kpts1.cpu().numpy()
+        pts2 = kpts2.cpu().numpy()
+        confidences = conf.cpu().numpy()
+        n = len(pts1)
+        return MatchResult(pts1, pts2, n, n, n, None, confidences)
+
+
 _REGISTRY = {
     'ORB':         OrbDetector,
     'AKAZE':       AkazeDetector,
@@ -296,6 +357,7 @@ _REGISTRY = {
     'SUPERPOINT':  SuperPointDetector,
     'LOFTR':       LoftrDetector,
     'MATCHFORMER': MatchFormerDetector,
+    'ROMA':        RomaDetector,
 }
 
 
@@ -304,7 +366,7 @@ def criar_detector(tipo, detector_params, matcher_params, device, papel='odometr
     Instancia o FeatureDetector correspondente a `tipo`.
 
     Args:
-        tipo (str): 'ORB' | 'AKAZE' | 'SIFT' | 'SUPERPOINT' | 'LOFTR' | 'MATCHFORMER'
+        tipo (str): 'ORB' | 'AKAZE' | 'SIFT' | 'SUPERPOINT' | 'LOFTR' | 'MATCHFORMER' | 'ROMA'
         detector_params (dict): config['detector_params'] completo (a classe
             extrai a chave que precisa, ex: detector_params['orb']).
         matcher_params (dict): config['matcher_params'] (usado por ORB/AKAZE/SIFT).
@@ -320,7 +382,7 @@ def criar_detector(tipo, detector_params, matcher_params, device, papel='odometr
     if cls is None:
         raise ValueError(
             f"Detector desconhecido: '{tipo}'. "
-            "Escolha: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER"
+            "Escolha: ORB | AKAZE | SIFT | SUPERPOINT | LOFTR | MATCHFORMER | ROMA"
         )
 
     key = tipo.lower()

@@ -191,9 +191,45 @@ class MapMatchingMixin:
                 "cobertura do mapa base nesta posição; preenchendo com zero "
                 "fora da área coberta.", lat, lon, self.roi_size_m
             )
-        patch = self.map_dataset.read(1, window=window, boundless=True, fill_value=0)
         patch_transform = self.map_dataset.window_transform(window)
+        precisa_cor = getattr(self.detector_absoluto, 'requires_color', False)
 
+        if precisa_cor and self.map_dataset.count >= 3:
+            patch = self.map_dataset.read([1, 2, 3], window=window, boundless=True, fill_value=0)
+            patch = np.transpose(patch, (1, 2, 0))  # (3,H,W) -> (H,W,3), ordem RGB
+            if patch.size == 0:
+                return np.zeros((1, 1, 3), dtype=np.uint8), patch_transform
+            patch_8u = np.stack([
+                cv.normalize(patch[..., c], None, alpha=0, beta=255,
+                             norm_type=cv.NORM_MINMAX, dtype=cv.CV_8U)
+                for c in range(3)
+            ], axis=-1)
+            # PIL/RomaDetector espera RGB; o resto do pipeline (cv.resize,
+            # warpAffine, copyMakeBorder) é agnóstico à ordem dos canais —
+            # cv.cvtColor(BGR2RGB) em RomaDetector.match faz a troca correta
+            # só se a origem for de fato BGR. Mapa base já está em RGB (bandas
+            # 1,2,3 do GeoTIFF), então convertemos aqui para BGR e manter a
+            # mesma convenção do resto do pipeline (cv.imread/frame de voo).
+            patch_8u = cv.cvtColor(patch_8u, cv.COLOR_RGB2BGR)
+            return patch_8u, patch_transform
+
+        if precisa_cor:
+            logger.warning(
+                "map_matching.absolute_detector exige cor, mas o mapa base "
+                "(%s) tem só %d banda(s) — usando grayscale replicado em 3 "
+                "canais como fallback degradado (não é cor real).",
+                self.config['paths'].get('map_tif', '?'), self.map_dataset.count
+            )
+            patch = self.map_dataset.read(1, window=window, boundless=True, fill_value=0)
+            if patch.size == 0:
+                return np.zeros((1, 1, 3), dtype=np.uint8), patch_transform
+            patch_8u = cv.normalize(patch, None, alpha=0, beta=255,
+                                    norm_type=cv.NORM_MINMAX, dtype=cv.CV_8U)
+            if patch_8u is None:
+                patch_8u = np.zeros_like(patch, dtype=np.uint8)
+            return cv.cvtColor(patch_8u, cv.COLOR_GRAY2BGR), patch_transform
+
+        patch = self.map_dataset.read(1, window=window, boundless=True, fill_value=0)
         if patch.size == 0:
             return np.zeros((1, 1), dtype=np.uint8), patch_transform
 
@@ -229,6 +265,25 @@ class MapMatchingMixin:
         patch_big, T_big = self._recortar_roi_mapa(
             lat, lon, margem_extra=1.5, lat_real=lat_real, lon_real=lon_real
         )
+
+        # 1b. (opcional, experimento "varredura de GSD do mapa base") degrada o
+        # crop bruto para simular uma fonte de satélite com GSD mais grosseiro,
+        # SEM trocar a fonte nem a altitude: reamostra o crop para o GSD-alvo
+        # (down com INTER_AREA) e de volta ao tamanho original (up com
+        # INTER_LINEAR), o que é equivalente a borrar a imagem à resolução-alvo
+        # preservando shape e T_big (a geo-referência não muda). Só atua quando
+        # o GSD-alvo é mais grosseiro que a resolução nativa do mapa.
+        gsd_alvo = getattr(self, 'base_map_degrade_gsd', None)
+        if gsd_alvo:
+            res_atual = abs(T_big.a)
+            if gsd_alvo > res_atual:
+                f = res_atual / gsd_alvo  # < 1
+                h0, w0 = patch_big.shape[:2]
+                wd, hd = max(1, int(round(w0 * f))), max(1, int(round(h0 * f)))
+                patch_big = cv.resize(
+                    cv.resize(patch_big, (wd, hd), interpolation=cv.INTER_AREA),
+                    (w0, h0), interpolation=cv.INTER_LINEAR
+                )
 
         # 2. Reamostrar para casar a resolução do crop com o GSD do voo
         h_big, w_big = patch_big.shape[:2]
@@ -305,6 +360,65 @@ class MapMatchingMixin:
         return patch_final, T_final, M_rot_inv, shape_antes_rot
 
     # ------------------------------------------------------------------
+    # Normalização fotométrica (experimento: reduzir o gap de domínio
+    # tonalidade/brilho/detalhe entre foto de voo e mapa base satelital)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _para_gray(img):
+        if img is not None and img.ndim == 3:
+            return cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        return img
+
+    @staticmethod
+    def _match_histograms_cdf(src, ref):
+        """Casa o histograma de src ao de ref (ambos grayscale uint8) via CDF,
+        sem depender de scikit-image (ausente no venv). Aproxima o brilho/
+        contraste global da foto de voo ao do patch satelital."""
+        src_hist = np.bincount(src.ravel(), minlength=256).astype(np.float64)
+        ref_hist = np.bincount(ref.ravel(), minlength=256).astype(np.float64)
+        src_cdf = np.cumsum(src_hist)
+        ref_cdf = np.cumsum(ref_hist)
+        if src_cdf[-1] == 0 or ref_cdf[-1] == 0:
+            return src
+        src_cdf /= src_cdf[-1]
+        ref_cdf /= ref_cdf[-1]
+        lut = np.interp(src_cdf, ref_cdf, np.arange(256)).astype(np.uint8)
+        return lut[src]
+
+    @staticmethod
+    def _grad_mag(img):
+        """Magnitude do gradiente Sobel normalizada para uint8 — casa
+        estrutura (bordas) em vez de intensidade bruta, insensível a
+        diferenças de tonalidade/brilho entre as fontes."""
+        gx = cv.Sobel(img, cv.CV_32F, 1, 0, ksize=3)
+        gy = cv.Sobel(img, cv.CV_32F, 0, 1, ksize=3)
+        mag = cv.magnitude(gx, gy)
+        return cv.normalize(mag, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+
+    def _preprocessar_para_match(self, img_aerea, patch):
+        """Aplica a normalização fotométrica configurada (self.photometric_norm)
+        às DUAS imagens antes do matching. Modos combináveis por '+':
+        'none' (default, passa direto), 'clahe', 'histmatch', 'gradient'.
+        Não altera geometria (só intensidades), então as homografias/pontos
+        continuam válidos em coordenadas de pixel."""
+        modo = getattr(self, 'photometric_norm', 'none')
+        if not modo or modo == 'none':
+            return img_aerea, patch
+        a = self._para_gray(img_aerea)
+        p = self._para_gray(patch)
+        if 'histmatch' in modo:
+            a = self._match_histograms_cdf(a, p)
+        if 'clahe' in modo:
+            clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            a = clahe.apply(a)
+            p = clahe.apply(p)
+        if 'gradient' in modo:
+            a = self._grad_mag(a)
+            p = self._grad_mag(p)
+        return a, p
+
+    # ------------------------------------------------------------------
     # Busca de escala
     # ------------------------------------------------------------------
 
@@ -330,8 +444,9 @@ class MapMatchingMixin:
             patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
                 lat, lon, angulo_graus, escala, lat_real=lat_real, lon_real=lon_real
             )
-            pts1, pts2, _, _, _, _ = self._obter_correspondencias(
-                img_aerea, patch, usar_absoluto=True
+            img_a_proc, patch_proc = self._preprocessar_para_match(img_aerea, patch)
+            pts1, pts2, _, _, _, _, _ = self._obter_correspondencias(
+                img_a_proc, patch_proc, usar_absoluto=True
             )
             if pts1 is None or len(pts1) < 4:
                 continue
@@ -397,8 +512,9 @@ class MapMatchingMixin:
             patch, T, M_rot_inv, shape_orig = self._preparar_patch_satelital(
                 lat, lon, angulo, escala, lat_real=lat_real, lon_real=lon_real
             )
-            pts1, pts2, _, _, _, _ = self._obter_correspondencias(
-                img_aerea, patch, usar_absoluto=True
+            img_a_proc, patch_proc = self._preprocessar_para_match(img_aerea, patch)
+            pts1, pts2, _, _, _, _, _ = self._obter_correspondencias(
+                img_a_proc, patch_proc, usar_absoluto=True
             )
             if pts1 is None or len(pts1) < 4:
                 continue
